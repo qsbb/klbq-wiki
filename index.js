@@ -111,18 +111,20 @@ function saveConfig(config) {
  * 配置项元数据：用于 -设置 命令的展示和修改
  * type: boolean / number / string
  * group: 分组
+ * label: 中文显示名（图片卡片中展示）
+ * key 仍用于命令匹配与修改（-设置 <key> <值>）
  */
 const CONFIG_META = {
-  render_image:      { type: 'boolean', group: '功能开关', desc: '将查询结果渲染为图片卡片（关闭后发送纯文字）' },
-  send_detail_link:  { type: 'boolean', group: '功能开关', desc: '查询结果后发送 Wiki 链接（关闭可避免触发其他插件复读检测）' },
-  text_fallback:     { type: 'boolean', group: '功能开关', desc: '图片渲染失败或超时后回退文字' },
-  cat_language_image:{ type: 'boolean', group: '功能开关', desc: '喵言喵语使用图片发送' },
-  auto_restart:      { type: 'boolean', group: '插件更新', desc: '更新成功后自动重启 Yunzai（需 PM2 等进程管理器自动拉起）' },
-  birthday_count:    { type: 'number',  group: '查询设置', desc: '生日查询返回角色数量（1-20）' },
-  restart_delay:     { type: 'number',  group: '插件更新', desc: '自动重启前等待秒数（1-30，确保消息发送完成）' },
-  grid_columns:      { type: 'number',  group: '图片布局', desc: '图片卡片每行格子数（1-4）' },
-  card_width:        { type: 'number',  group: '图片布局', desc: '图片卡片最小宽度（420-1200 像素）' },
-  image_timeout:     { type: 'number',  group: '图片布局', desc: '图片渲染超时时间（1-60 秒）' },
+  render_image:      { type: 'boolean', group: '功能开关', label: '图片渲染',   desc: '将查询结果渲染为图片卡片（关闭后发送纯文字）' },
+  send_detail_link:  { type: 'boolean', group: '功能开关', label: '详情链接',   desc: '查询结果后发送 Wiki 链接（关闭可避免触发其他插件复读检测）' },
+  text_fallback:     { type: 'boolean', group: '功能开关', label: '文字回退',   desc: '图片渲染失败或超时后回退文字' },
+  cat_language_image:{ type: 'boolean', group: '功能开关', label: '喵言图片',   desc: '喵言喵语使用图片发送' },
+  auto_restart:      { type: 'boolean', group: '插件更新', label: '自动重启',   desc: '更新成功后自动重启 Yunzai（需 PM2 等进程管理器自动拉起）' },
+  birthday_count:    { type: 'number',  group: '查询设置', label: '生日数量',   desc: '生日查询返回角色数量（1-20）' },
+  restart_delay:     { type: 'number',  group: '插件更新', label: '重启延时',   desc: '自动重启前等待秒数（1-30，确保消息发送完成）' },
+  grid_columns:      { type: 'number',  group: '图片布局', label: '列数',       desc: '图片卡片每行格子数（1-4）' },
+  card_width:        { type: 'number',  group: '图片布局', label: '卡片宽度',   desc: '图片卡片最小宽度（420-1200 像素）' },
+  image_timeout:     { type: 'number',  group: '图片布局', label: '渲染超时',   desc: '图片渲染超时时间（1-60 秒）' },
 }
 
 /** 读取渲染设置 */
@@ -334,13 +336,9 @@ export class KlbqWikiPlugin extends plugin {
   async renderImage(title, kind, items, thumb, tip) {
     const { columns, cardWidth, timeout } = renderSettings(this.config)
     try {
-      const safeItems = items.map((i) => ({
-        label: escapeHtml(i.label),
-        value: escapeHtml(i.value),
-      }))
-      // 当 items 数量少于配置列数时，使用 items.length 作为实际列数
-      // 避免单条内容（如帮助文本）只占左半边导致大片空白
-      const actualColumns = Math.min(columns, safeItems.length || 1)
+      // art-template 的 {{}} 默认会 HTML 转义，无需手动 escapeHtml
+      // 否则会双重转义导致 < > 等字符显示为 &lt; &gt;
+      const actualColumns = Math.min(columns, items.length || 1)
       // saveId 必须是文件系统安全名（不能含 URL 编码字符或中文）
       // 因为 puppeteer 的 file:// URL 会自动解码 %XX，导致文件名不匹配
       const saveId = 'card_' + Date.now()
@@ -351,11 +349,11 @@ export class KlbqWikiPlugin extends plugin {
         saveId,
         imgType: 'jpeg',
         quality: 88,
-        title: escapeHtml(title),
-        kind: escapeHtml(kind),
-        items: safeItems,
+        title,
+        kind,
+        items,
         thumb: thumb || '',
-        tip: tip ? escapeHtml(tip) : '',
+        tip: tip || '',
         grid_columns: actualColumns,
         card_width: cardWidth,
         pageGotoParams: {
@@ -373,24 +371,16 @@ export class KlbqWikiPlugin extends plugin {
   async renderHelp(title, kind, groups) {
     const { cardWidth, timeout } = renderSettings(this.config)
     try {
-      // 转义所有文本字段
-      const safeGroups = groups.map((g) => ({
-        name: escapeHtml(g.name),
-        items: g.items.map((i) => ({
-          name: escapeHtml(i.name || ''),
-          desc: escapeHtml(i.desc || ''),
-          value: i.value ? escapeHtml(i.value) : '',
-        })),
-      }))
+      // art-template 的 {{}} 默认会 HTML 转义，无需手动 escapeHtml
       const saveId = 'help_' + Date.now()
       return await puppeteer.screenshot('klbq-wiki', {
         tplFile: HELP_TEMPLATE,
         saveId,
         imgType: 'jpeg',
         quality: 88,
-        title: escapeHtml(title),
-        kind: escapeHtml(kind),
-        groups: safeGroups,
+        title,
+        kind,
+        groups,
         card_width: cardWidth,
         pageGotoParams: {
           timeout: timeout * 1000,
@@ -768,7 +758,8 @@ export class KlbqWikiPlugin extends plugin {
       items: groupMap[groupName].map((item) => {
         const value = this.config[item.key]
         const valueStr = this._formatValue(value, item.type)
-        return { name: item.key, desc: item.desc, value: valueStr }
+        // 显示名：中文 label + 英文 key（便于修改时输入）
+        return { name: `${item.label}（${item.key}）`, desc: item.desc, value: valueStr }
       }),
     }))
     // 追加一个"使用方法"分组

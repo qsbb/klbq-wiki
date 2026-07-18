@@ -133,6 +133,23 @@ function renderSettings(config) {
   return { columns, cardWidth, timeout, fallback }
 }
 
+/**
+ * 从用户消息中提取命令前缀
+ * 用于在卡片提示中显示与用户指令一致的前缀
+ * 例如：-心夏 → '-'，#klbq 心夏 → '#klbq'，#卡拉彼丘 心夏 → '#卡拉彼丘'
+ * @param {string} msg 原始消息
+ * @returns {string} 前缀（不含尾部空格），无法识别时返回 '-'
+ */
+function extractPrefix(msg) {
+  if (!msg) return '-'
+  // 匹配 - 前缀
+  if (/^-\s*/.test(msg)) return '-'
+  // 匹配 #klbq / /klbq / #卡拉彼丘 / /卡拉彼丘 / #卡丘 / /卡丘 前缀
+  const m = msg.match(/^(?:\/|#)(?:klbq|卡拉彼丘|卡丘)(?=\s|$)/i)
+  if (m) return m[0]
+  return '-'
+}
+
 /** 帮助文本 */
 function helpText() {
   return (
@@ -267,6 +284,9 @@ export class KlbqWikiPlugin extends plugin {
         label: escapeHtml(i.label),
         value: escapeHtml(i.value),
       }))
+      // 当 items 数量少于配置列数时，使用 items.length 作为实际列数
+      // 避免单条内容（如帮助文本）只占左半边导致大片空白
+      const actualColumns = Math.min(columns, safeItems.length || 1)
       // saveId 必须是文件系统安全名（不能含 URL 编码字符或中文）
       // 因为 puppeteer 的 file:// URL 会自动解码 %XX，导致文件名不匹配
       const saveId = 'card_' + Date.now()
@@ -282,7 +302,7 @@ export class KlbqWikiPlugin extends plugin {
         items: safeItems,
         thumb: thumb || '',
         tip: tip ? escapeHtml(tip) : '',
-        grid_columns: columns,
+        grid_columns: actualColumns,
         card_width: cardWidth,
         pageGotoParams: {
           timeout: timeout * 1000,
@@ -302,7 +322,9 @@ export class KlbqWikiPlugin extends plugin {
     const finalItems = items.length ? items : [{ label: '简介', value: '暂无可提取的结构化信息。' }]
     const kind = isWeapon ? '武器资料' : '角色资料'
     const weapon = fields['武器'] || ''
-    const tip = !isWeapon && weapon ? `提示：可继续使用 #klbq ${weapon} 查询${title}的武器。` : ''
+    // 提示前缀跟随用户发送的指令，如 -心夏 → '-'，#klbq 心夏 → '#klbq'
+    const prefix = extractPrefix(e.msg)
+    const tip = !isWeapon && weapon ? `提示：可继续使用 ${prefix} ${weapon} 查询${title}的武器。` : ''
 
     const { fallback } = renderSettings(this.config)
     const renderImage = !!this.config.render_image
@@ -472,7 +494,9 @@ export class KlbqWikiPlugin extends plugin {
     const pageUrl = this.wiki.pageUrl(roleName)
     const fallbackThumb = page.thumbnail?.source || ''
     const thumb = await this.wiki.enhanceThumb(roleName, html, { 名称: roleName }, fallbackThumb)
-    const tip = '输入 #klbq 角色名 皮肤名 查询皮肤详情'
+    // 提示前缀跟随用户发送的指令
+    const prefix = extractPrefix(e.msg)
+    const tip = `输入 ${prefix} 角色名 皮肤名 查询皮肤详情`
 
     const renderImage = !!this.config.render_image
     if (renderImage && puppeteer) {

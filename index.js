@@ -64,6 +64,58 @@ function loadConfig() {
   }
 }
 
+/** 保存配置到 YAML 文件 */
+function saveConfig(config) {
+  try {
+    if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true })
+    const lines = ['# 卡拉彼丘 Wiki 查询插件配置', '# 修改后重启 Yunzai 生效（使用 -设置 命令修改会自动保存）', '']
+    const descriptions = {
+      birthday_count: '# 【生日查询】返回角色数量（1-20）',
+      render_image: '# 【功能开关】将查询结果渲染为图片卡片',
+      cat_language_image: '# 【喵言喵语】使用图片发送',
+      send_detail_link: '# 【详情链接】发送 Wiki 链接',
+      image_timeout: '# 【图片渲染】超时时间（秒，1-60）',
+      text_fallback: '# 【图片渲染】失败或超时后回退文字',
+      grid_columns: '# 【图片布局】每行格子数（1-4）',
+      card_width: '# 【图片布局】卡片最小宽度（像素，420-1200）',
+      custom_aliases: '# 【别名】自定义别名映射，每行一条，格式：别名=页面标题',
+    }
+    for (const [key, value] of Object.entries(DEFAULT_CONFIG)) {
+      if (descriptions[key]) lines.push(descriptions[key])
+      const v = config[key] !== undefined ? config[key] : value
+      if (typeof v === 'string' && v.includes('\n')) {
+        lines.push(`${key}: |`, `  ${v.split('\n').join('\n  ')}`)
+      } else if (typeof v === 'string' && v === '') {
+        lines.push(`${key}: ''`)
+      } else {
+        lines.push(`${key}: ${v}`)
+      }
+      lines.push('')
+    }
+    fs.writeFileSync(CONFIG_FILE, lines.join('\n'), 'utf8')
+    return true
+  } catch (err) {
+    logger.error(`[KlbqWiki] 配置保存失败: ${err}`)
+    return false
+  }
+}
+
+/**
+ * 配置项元数据：用于 -设置 命令的展示和修改
+ * type: boolean / number / string
+ * group: 分组
+ */
+const CONFIG_META = {
+  render_image:      { type: 'boolean', group: '功能开关', desc: '将查询结果渲染为图片卡片（关闭后发送纯文字）' },
+  send_detail_link:  { type: 'boolean', group: '功能开关', desc: '查询结果后发送 Wiki 链接（关闭可避免触发其他插件复读检测）' },
+  text_fallback:     { type: 'boolean', group: '功能开关', desc: '图片渲染失败或超时后回退文字' },
+  cat_language_image:{ type: 'boolean', group: '功能开关', desc: '喵言喵语使用图片发送' },
+  birthday_count:    { type: 'number',  group: '查询设置', desc: '生日查询返回角色数量（1-20）' },
+  grid_columns:      { type: 'number',  group: '图片布局', desc: '图片卡片每行格子数（1-4）' },
+  card_width:        { type: 'number',  group: '图片布局', desc: '图片卡片最小宽度（420-1200 像素）' },
+  image_timeout:     { type: 'number',  group: '图片布局', desc: '图片渲染超时时间（1-60 秒）' },
+}
+
 /** 读取渲染设置 */
 function renderSettings(config) {
   const columns = Math.max(1, Math.min(4, parseInt(config.grid_columns) || 2))
@@ -93,6 +145,7 @@ function helpText() {
     '\n【插件管理（仅主人）】\n' +
     '-卡拉彼丘更新　拉取插件最新版本\n' +
     '-卡拉彼丘强制更新　丢弃本地改动并强制更新\n' +
+    '-设置　查看与修改插件配置\n' +
     '\n支持 - 和 #klbq / /klbq / #卡拉彼丘 / #卡丘 前缀，支持角色别名。'
   )
 }
@@ -148,6 +201,10 @@ export class KlbqWikiPlugin extends plugin {
       }
       if (query === '卡拉彼丘强制更新' || query === '强制更新') {
         return await this.handleUpdate(e, true)
+      }
+      // 插件设置
+      if (query === '设置' || query === '卡拉彼丘设置' || query === '配置') {
+        return await this.handleSettings(e)
       }
       // 生日
       if (query === '生日' || query === '角色生日') {
@@ -501,6 +558,177 @@ export class KlbqWikiPlugin extends plugin {
     if (e.friend?.makeForwardMsg) return await e.friend.makeForwardMsg(forwardMsg)
     if (Bot.makeForwardMsg) return await Bot.makeForwardMsg(forwardMsg)
     throw new Error('当前适配器不支持合并转发消息')
+  }
+
+  /**
+   * 插件设置：查看和修改配置
+   * 用法：
+   *   -设置            查看所有配置
+   *   -设置 项名        查看指定项详情
+   *   -设置 项名 值      修改指定项
+   *   -设置 项名 on/off  布尔项快捷开关
+   *   -设置 重置         恢复全部默认配置
+   */
+  async handleSettings(e) {
+    // 仅主人可用
+    if (!e.isMaster) {
+      await e.reply('仅主人可使用设置功能。')
+      return true
+    }
+
+    // 刷新配置（确保读到最新值）
+    this.config = loadConfig()
+
+    // 解析参数：支持 "项名 值" 或 "项名" 或空
+    const raw = (e.msg || '').replace(/^(-|(?:\/|#)(?:klbq|卡拉彼丘|卡丘))\s*/i, '').trim()
+    const args = raw.replace(/^设置|卡拉彼丘设置|配置/, '').trim().split(/\s+/).filter(Boolean)
+
+    // 无参数：列出所有配置
+    if (args.length === 0) {
+      return await this._settingsList(e)
+    }
+
+    const key = args[0]
+
+    // 重置全部
+    if (key === '重置' || key === 'reset' || key === '默认') {
+      this.config = { ...DEFAULT_CONFIG }
+      const ok = saveConfig(this.config)
+      await e.reply(ok ? '✅ 已恢复全部默认配置并保存。' : '❌ 配置保存失败，请查看日志。')
+      return true
+    }
+
+    // 查找配置项（支持模糊匹配）
+    const matchedKey = this._matchConfigKey(key)
+    if (!matchedKey) {
+      await e.reply(`❌ 未找到配置项 "${key}"。\n发送 -设置 查看所有可用配置项。`)
+      return true
+    }
+
+    // 仅查看单项
+    if (args.length === 1) {
+      const meta = CONFIG_META[matchedKey]
+      const value = this.config[matchedKey]
+      const lines = [
+        `【${matchedKey}】`,
+        `说明：${meta.desc}`,
+        `类型：${meta.type}`,
+        `当前值：${this._formatValue(value, meta.type)}`,
+        '',
+        `修改方法：`,
+        `-设置 ${matchedKey} <新值>`,
+      ]
+      if (meta.type === 'boolean') {
+        lines.push(`-设置 ${matchedKey} on  或  -设置 ${matchedKey} off`)
+      }
+      await e.reply(lines.join('\n'))
+      return true
+    }
+
+    // 修改配置
+    const newValue = args.slice(1).join(' ')
+    return await this._settingsUpdate(e, matchedKey, newValue)
+  }
+
+  /** 列出所有配置 */
+  async _settingsList(e) {
+    const groups = {}
+    for (const [key, meta] of Object.entries(CONFIG_META)) {
+      if (!groups[meta.group]) groups[meta.group] = []
+      groups[meta.group].push({ key, ...meta })
+    }
+    const lines = ['卡拉彼丘 Wiki 插件配置', '']
+    for (const [groupName, items] of Object.entries(groups)) {
+      lines.push(`【${groupName}】`)
+      for (const item of items) {
+        const value = this.config[item.key]
+        const valueStr = this._formatValue(value, item.type)
+        lines.push(`• ${item.key} = ${valueStr}`)
+        lines.push(`  ${item.desc}`)
+      }
+      lines.push('')
+    }
+    lines.push('修改方法：-设置 <项名> <值>')
+    lines.push('布尔项可使用：-设置 <项名> on/off')
+    lines.push('重置全部：-设置 重置')
+    await e.reply(lines.join('\n'))
+    return true
+  }
+
+  /** 修改单项配置 */
+  async _settingsUpdate(e, key, rawValue) {
+    const meta = CONFIG_META[key]
+    let value
+    if (meta.type === 'boolean') {
+      const v = rawValue.toLowerCase()
+      if (['on', 'true', '1', '开', '开启', '是'].includes(v)) value = true
+      else if (['off', 'false', '0', '关', '关闭', '否'].includes(v)) value = false
+      else {
+        await e.reply(`❌ ${key} 是布尔类型，请使用 on/off、true/false、开/关。`)
+        return true
+      }
+    } else if (meta.type === 'number') {
+      value = Number(rawValue)
+      if (isNaN(value)) {
+        await e.reply(`❌ ${key} 是数字类型，请输入有效数字。`)
+        return true
+      }
+      // 范围校验
+      const ranges = {
+        birthday_count: [1, 20],
+        grid_columns: [1, 4],
+        card_width: [420, 1200],
+        image_timeout: [1, 60],
+      }
+      if (ranges[key]) {
+        const [min, max] = ranges[key]
+        if (value < min || value > max) {
+          await e.reply(`❌ ${key} 取值范围 ${min}-${max}，当前输入 ${value}。`)
+          return true
+        }
+        // 整数校验
+        if (key !== 'image_timeout' && !Number.isInteger(value)) {
+          await e.reply(`❌ ${key} 必须是整数。`)
+          return true
+        }
+      }
+    } else {
+      value = rawValue
+    }
+
+    const oldValue = this.config[key]
+    this.config[key] = value
+    const ok = saveConfig(this.config)
+    if (ok) {
+      await e.reply(
+        `✅ 配置已更新并保存：\n${key}\n${this._formatValue(oldValue, meta.type)} → ${this._formatValue(value, meta.type)}\n\n重启 Yunzai 后完全生效。`,
+      )
+    } else {
+      this.config[key] = oldValue
+      await e.reply('❌ 配置保存失败，请查看日志。')
+    }
+    return true
+  }
+
+  /** 格式化配置值用于显示 */
+  _formatValue(value, type) {
+    if (type === 'boolean') return value ? '✅ 开启' : '❌ 关闭'
+    if (value === '' || value == null) return '(空)'
+    return String(value)
+  }
+
+  /** 模糊匹配配置项名 */
+  _matchConfigKey(input) {
+    if (CONFIG_META[input]) return input
+    const lower = input.toLowerCase()
+    for (const key of Object.keys(CONFIG_META)) {
+      if (key.toLowerCase() === lower) return key
+    }
+    // 前缀匹配
+    const candidates = Object.keys(CONFIG_META).filter(k =>
+      k.toLowerCase().startsWith(lower) || k.toLowerCase().includes(lower),
+    )
+    return candidates.length === 1 ? candidates[0] : null
   }
 
   /**

@@ -1,14 +1,14 @@
 # 卡拉彼丘 Wiki 查询（Yunzai 版）
 
 [![Yunzai](https://img.shields.io/badge/Yunzai-Plugin-4c8bf5)](https://github.com/TimeRainStarSky/Yunzai)
-[![Version](https://img.shields.io/badge/version-1.5.0-5c6ac4)](https://github.com/qsbb/astrbot_plugin_klbq_wiki)
+[![Version](https://img.shields.io/badge/version-1.6.0-5c6ac4)](https://github.com/qsbb/astrbot_plugin_klbq_wiki)
 
 一个面向 [Yunzai-Bot](https://github.com/TimeRainStarSky/Yunzai)（TRSS-Yunzai / Miao-Yunzai）的卡拉彼丘资料查询插件。数据来自卡拉彼丘 Biligame Wiki，支持角色、武器、皮肤、近期生日、当前赛季和喵言喵语查询。
 
 本插件移植自 [astrbot_plugin_klbq_wiki](https://github.com/qsbb/astrbot_plugin_klbq_wiki) v1.4.5，将原有的 AstrBot Python 实现完整改写为 Yunzai JavaScript 插件。
 
 - 插件名称：`klbq-wiki`
-- 当前版本：`1.5.0`
+- 当前版本：`1.6.0`
 - 作者：凌溪
 
 ## 功能特性
@@ -221,6 +221,8 @@ pnpm install cheerio
 | `text_fallback` | 布尔 | `true` | 图片渲染失败或超时后是否发送文字结果 |
 | `grid_columns` | 整数 | `2` | 图片卡片每行资料格子数，范围 1–4 |
 | `card_width` | 整数 | `760` | 图片卡片最小宽度，范围 420–1200 像素 |
+| `image_cache` | 布尔 | `true` | 将查询过的角色立绘、皮肤图缓存到本地 `data/images/`，避免重复下载 |
+| `image_cache_ttl` | 整数 | `30` | 图片缓存有效期（天），0 表示永不过期，范围 0–365 |
 | `auto_restart` | 布尔 | `true` | 更新成功后自动重启 Yunzai，依赖 PM2 等进程管理器自动拉起 |
 | `restart_delay` | 整数 | `3` | 自动重启前等待秒数，范围 1–30，确保消息发送完成 |
 | `custom_aliases` | 多行文本 | 空 | 自定义别名，每行填写一条映射 |

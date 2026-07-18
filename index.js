@@ -19,6 +19,7 @@ import path from 'node:path'
 import YAML from 'yaml'
 import { WikiClient, escapeHtml, unescapeHtml, cleanText } from './lib/wiki.js'
 import { buildAliasMap, ROLE_FIELDS, WEAPON_FIELDS } from './lib/aliases.js'
+import { ImageCache } from './lib/image-cache.js'
 
 // puppeteer 渲染器：Yunzai 内置的全局渲染器
 let puppeteer = null
@@ -50,6 +51,10 @@ const DEFAULT_CONFIG = {
   text_fallback: true,
   grid_columns: 2,
   card_width: 760,
+  // 图片缓存：查询过的角色立绘、皮肤图等会存到 data/images/，避免重复网络下载
+  image_cache: true,
+  // 图片缓存有效期（天），0 表示永不过期
+  image_cache_ttl: 30,
   // 更新成功后自动重启 Yunzai（通过 redis 标记 + process.exit，依赖 PM2 自动重启）
   auto_restart: true,
   // 自动重启前等待秒数（确保消息发送完成）
@@ -84,6 +89,8 @@ function saveConfig(config) {
       text_fallback: '# 【图片渲染】失败或超时后回退文字',
       grid_columns: '# 【图片布局】每行格子数（1-4）',
       card_width: '# 【图片布局】卡片最小宽度（像素，420-1200）',
+      image_cache: '# 【图片缓存】将查询过的图片缓存到本地，避免重复下载',
+      image_cache_ttl: '# 【图片缓存】有效期（天，0 表示永不过期）',
       auto_restart: '# 【插件更新】更新成功后自动重启 Yunzai（需 PM2 等进程管理器）',
       restart_delay: '# 【插件更新】自动重启前等待秒数（1-30，确保消息发送完成）',
       custom_aliases: '# 【别名】自定义别名映射，每行一条，格式：别名=页面标题',
@@ -126,6 +133,8 @@ const CONFIG_META = {
   grid_columns:      { type: 'number',  group: '图片布局', label: '列数',       desc: '图片卡片每行格子数（1-4）' },
   card_width:        { type: 'number',  group: '图片布局', label: '卡片宽度',   desc: '图片卡片最小宽度（420-1200 像素）' },
   image_timeout:     { type: 'number',  group: '图片布局', label: '渲染超时',   desc: '图片渲染超时时间（1-60 秒）' },
+  image_cache:       { type: 'boolean', group: '图片布局', label: '图片缓存',   desc: '将查询过的角色立绘、皮肤图缓存到本地，避免重复下载' },
+  image_cache_ttl:   { type: 'number',  group: '图片布局', label: '缓存有效期', desc: '图片缓存有效期（天，0 表示永不过期）' },
 }
 
 /** 读取渲染设置 */
@@ -224,8 +233,13 @@ export class KlbqWikiPlugin extends plugin {
         },
       ],
     })
-    this.wiki = new WikiClient()
     this.config = loadConfig()
+    // 图片缓存实例：根据配置决定是否启用
+    this.imageCache = new ImageCache({
+      enabled: this.config.image_cache !== false,
+      ttl: (parseInt(this.config.image_cache_ttl) || 30) * 86400,
+    })
+    this.wiki = new WikiClient({ imageCache: this.imageCache })
     this.aliasMap = buildAliasMap(this.config.custom_aliases)
   }
 
@@ -883,6 +897,7 @@ export class KlbqWikiPlugin extends plugin {
         grid_columns: [1, 4],
         card_width: [420, 1200],
         image_timeout: [1, 60],
+        image_cache_ttl: [0, 365],
         restart_delay: [1, 30],
       }
       if (ranges[key]) {

@@ -19,7 +19,7 @@ import path from 'node:path'
 import YAML from 'yaml'
 import { WikiClient, escapeHtml, unescapeHtml, cleanText } from './lib/wiki.js'
 import { buildAliasMap, ROLE_FIELDS, WEAPON_FIELDS } from './lib/aliases.js'
-import { ImageCache } from './lib/image-cache.js'
+import { ImageCache, toFileUrl } from './lib/image-cache.js'
 
 // puppeteer 渲染器：Yunzai 内置的全局渲染器
 let puppeteer = null
@@ -383,7 +383,9 @@ export class KlbqWikiPlugin extends plugin {
         title,
         kind,
         items,
-        thumb: thumb || '',
+        // puppeteer 用 page.setContent 加载 HTML，本地路径必须转成 file:// URL
+        // 否则 <img src="d:\..."> 在 about:blank 基础下无法解析
+        thumb: toFileUrl(thumb) || '',
         tip: tip || '',
         grid_columns: actualColumns,
         card_width: cardWidth,
@@ -540,7 +542,8 @@ export class KlbqWikiPlugin extends plugin {
             name: hero.name,
             date: dateStr(hero.month, hero.day),
             countdown: when(hero.days),
-            art: artUrl,
+            // puppeteer 用 page.setContent 加载，本地路径需转 file:// URL
+            art: toFileUrl(artUrl),
           },
           others: others.map((item) => ({
             name: item.name,

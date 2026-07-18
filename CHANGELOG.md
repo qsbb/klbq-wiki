@@ -1,5 +1,15 @@
 # 更新日志
 
+## 1.7.1
+
+- **修复 puppeteer 无法加载本地缓存图片的问题**
+  - 根因：`ImageCache` 返回相对路径（`plugins/klbq-wiki/data/images/...`），但 puppeteer 用 `page.setContent()` 加载 HTML 时基础是 `about:blank`，相对路径无法解析
+  - 修复：`CACHE_DIR` 改为绝对路径（`path.resolve(process.cwd(), ...)`），`get()` 返回绝对路径
+  - 修复：puppeteer 的 `<img src>` 必须用 `file://` URL 才能加载本地文件，新增 `toFileUrl()` 函数转换
+  - `renderImage` 的 `thumb` 和 `handleBirthday` 的 `hero.art` 传入模板前用 `toFileUrl()` 转换
+  - `segment.image()` 仍用绝对路径（Yunzai 原生支持）
+- **影响范围**：`-生日` 卡片的立绘、`-心夏` 等角色卡片的立绘现在可以正确显示
+
 ## 1.7.0
 
 - **新增 `-更新资源` 命令：预下载全部角色立绘和皮肤图到本地**

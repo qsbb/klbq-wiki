@@ -183,7 +183,8 @@ export class KlbqWikiPlugin extends plugin {
     if (renderImage && puppeteer) {
       const img = await this.renderImage(title, kind, [{ label: '内容', value: text }], thumb, tip)
       if (img) {
-        await e.reply(segment.image(`base64://${img.toString('base64')}`))
+        // puppeteer.screenshot 已返回 segment 对象，直接发送
+        await e.reply(img)
         return true
       }
     }
@@ -191,7 +192,7 @@ export class KlbqWikiPlugin extends plugin {
     return true
   }
 
-  /** 渲染图片卡片 */
+  /** 渲染图片卡片，返回 segment 对象或 false */
   async renderImage(title, kind, items, thumb, tip) {
     const { columns, cardWidth, timeout } = renderSettings(this.config)
     try {
@@ -202,6 +203,8 @@ export class KlbqWikiPlugin extends plugin {
       // saveId 必须是文件系统安全名（不能含 URL 编码字符或中文）
       // 因为 puppeteer 的 file:// URL 会自动解码 %XX，导致文件名不匹配
       const saveId = 'card_' + Date.now()
+      // 注意：Yunzai 的 puppeteer.screenshot 已返回 segment 对象，
+      // 无需再用 segment.image() 包装，直接返回即可
       return await puppeteer.screenshot('klbq-wiki', {
         tplFile: CARD_TEMPLATE,
         saveId,
@@ -240,7 +243,8 @@ export class KlbqWikiPlugin extends plugin {
     if (renderImage && puppeteer) {
       const img = await this.renderImage(title, kind, finalItems, thumb, tip)
       if (img) {
-        await e.reply(segment.image(`base64://${img.toString('base64')}`))
+        // puppeteer.screenshot 已返回 segment 对象，直接发送
+        await e.reply(img)
         if (this.config.send_detail_link) await e.reply(pageUrl)
         return true
       }
@@ -407,7 +411,8 @@ export class KlbqWikiPlugin extends plugin {
     if (renderImage && puppeteer) {
       const img = await this.renderImage(roleName, '皮肤列表', items, thumb, tip)
       if (img) {
-        await e.reply(segment.image(`base64://${img.toString('base64')}`))
+        // puppeteer.screenshot 已返回 segment 对象，直接发送
+        await e.reply(img)
         if (this.config.send_detail_link) await e.reply(pageUrl)
         return true
       }

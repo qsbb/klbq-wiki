@@ -136,7 +136,8 @@ function renderSettings(config) {
 /**
  * 从用户消息中提取命令前缀
  * 用于在卡片提示中显示与用户指令一致的前缀
- * 例如：-心夏 → '-'，#klbq 心夏 → '#klbq'，#卡拉彼丘 心夏 → '#卡拉彼丘'
+ * 例如：-心夏 → '-'，#klbq 心夏 → '#klbq'，#卡拉彼丘心夏 → '#卡拉彼丘'
+ * 前缀与关键词之间有无空格均可
  * @param {string} msg 原始消息
  * @returns {string} 前缀（不含尾部空格），无法识别时返回 '-'
  */
@@ -145,7 +146,8 @@ function extractPrefix(msg) {
   // 匹配 - 前缀
   if (/^-\s*/.test(msg)) return '-'
   // 匹配 #klbq / /klbq / #卡拉彼丘 / /卡拉彼丘 / #卡丘 / /卡丘 前缀
-  const m = msg.match(/^(?:\/|#)(?:klbq|卡拉彼丘|卡丘)(?=\s|$)/i)
+  // 不要求前缀后有空白，兼容 #klbq心夏 等无空格写法
+  const m = msg.match(/^(?:\/|#)(?:klbq|卡拉彼丘|卡丘)/i)
   if (m) return m[0]
   return '-'
 }
@@ -188,8 +190,9 @@ export class KlbqWikiPlugin extends plugin {
       rule: [
         {
           // 支持多种前缀：-心夏 或 #klbq 心夏 / /klbq 心夏 / #卡拉彼丘 心夏 / #卡丘 心夏
+          // 前缀与关键词之间有无空格均可：#klbq心夏、#卡拉彼丘心夏 同样匹配
           // 排除 -数字（负数）情况
-          reg: /^(?:-(?:$|\D)|(?:\/|#)(?:klbq|卡拉彼丘|卡丘)(?:\s|$))/i,
+          reg: /^(?:-(?:$|\D)|(?:\/|#)(?:klbq|卡拉彼丘|卡丘))/i,
           fnc: 'onKlbqCommand',
           log: true,
         },

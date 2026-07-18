@@ -88,6 +88,9 @@ function helpText() {
     '-生日　查看近期角色生日\n' +
     '-赛季　查看赛季结束时间\n' +
     '-喵言喵语　随机喵言喵语\n' +
+    '\n【插件管理（仅主人）】\n' +
+    '-卡拉彼丘更新　拉取插件最新版本\n' +
+    '-卡拉彼丘强制更新　丢弃本地改动并强制更新\n' +
     '\n支持 - 和 #klbq / /klbq / #卡拉彼丘 / #卡丘 前缀，支持角色别名。'
   )
 }
@@ -137,6 +140,13 @@ export class KlbqWikiPlugin extends plugin {
     }
 
     try {
+      // 插件更新
+      if (query === '卡拉彼丘更新' || query === '更新') {
+        return await this.handleUpdate(e, false)
+      }
+      if (query === '卡拉彼丘强制更新' || query === '强制更新') {
+        return await this.handleUpdate(e, true)
+      }
       // 生日
       if (query === '生日' || query === '角色生日') {
         return await this.handleBirthday(e)
@@ -484,5 +494,88 @@ export class KlbqWikiPlugin extends plugin {
     if (e.friend?.makeForwardMsg) return await e.friend.makeForwardMsg(forwardMsg)
     if (Bot.makeForwardMsg) return await Bot.makeForwardMsg(forwardMsg)
     throw new Error('当前适配器不支持合并转发消息')
+  }
+
+  /**
+   * 插件更新
+   * @param e 消息事件
+   * @param force 是否强制更新（强制更新会丢弃本地改动）
+   */
+  async handleUpdate(e, force = false) {
+    // 仅主人可用
+    if (!e.isMaster) {
+      await e.reply('仅主人可使用更新功能。')
+      return true
+    }
+
+    const pluginDir = path.resolve('plugins/klbq-wiki')
+    const gitDir = path.join(pluginDir, '.git')
+    if (!fs.existsSync(gitDir)) {
+      await e.reply('插件目录不是 git 仓库，无法通过 git 更新。\n请手动重新克隆：\ngit clone https://github.com/qsbb/klbq-wiki.git ./plugins/klbq-wiki/')
+      return true
+    }
+
+    const cmd = force
+      ? 'git reset --hard HEAD && git clean -fd && git pull --ff-only'
+      : 'git pull --ff-only'
+
+    await e.reply(force ? '开始强制更新 klbq-wiki...' : '开始更新 klbq-wiki...')
+    logger.info(`[KlbqWiki] 执行更新: ${cmd}`)
+
+    try {
+      const { execSync } = await import('node:child_process')
+      const output = execSync(cmd, {
+        cwd: pluginDir,
+        encoding: 'utf8',
+        timeout: 60000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      const text = (output || '').trim()
+      logger.info(`[KlbqWiki] 更新输出: ${text}`)
+
+      // 判断是否有新提交
+      const isUpToDate = /Already up to date|已经是最新|up-to-date/i.test(text)
+      if (isUpToDate) {
+        await e.reply('klbq-wiki 已是最新版本，无需更新。')
+      } else {
+        // 读取最新版本号
+        let version = '未知'
+        try {
+          const pkg = JSON.parse(fs.readFileSync(path.join(pluginDir, 'package.json'), 'utf8'))
+          version = pkg.version || '未知'
+        } catch {}
+        const lines = [
+          'klbq-wiki 更新成功！',
+          `当前版本：v${version}`,
+          '',
+          '更新日志：',
+          text.split('\n').slice(0, 15).join('\n'),
+        ]
+        await e.reply(lines.join('\n'))
+        // 提示重启
+        await e.reply('请重启 Yunzai 以使更新生效。')
+      }
+      return true
+    } catch (err) {
+      const stderr = err.stderr?.toString() || err.message
+      logger.error(`[KlbqWiki] 更新失败: ${stderr}`)
+
+      // 常见错误诊断
+      let hint = ''
+      if (/local changes|would be overwritten|Your local changes/i.test(stderr)) {
+        hint = '\n本地有改动冲突，可使用 -卡拉彼丘强制更新 丢弃本地改动后重试。'
+      } else if (/diverged|different histories|no common ancestor/i.test(stderr)) {
+        hint = '\n本地分支与远程分歧，可使用 -卡拉彼丘强制更新 重置为远程版本。'
+      } else if (/Permission denied|could not read username|Authentication failed/i.test(stderr)) {
+        hint = '\n认证失败，请检查 git 凭据配置。'
+      } else if (/not a git repository|does not appear to be a git repository/i.test(stderr)) {
+        hint = '\n插件目录不是 git 仓库，请重新克隆。'
+      } else if (/timeout|TIMEDOUT/i.test(stderr)) {
+        hint = '\n更新超时（60秒），请检查网络后重试。'
+      }
+
+      await e.reply(`klbq-wiki 更新失败：\n${stderr.split('\n').slice(0, 8).join('\n')}${hint}`)
+      return true
+    }
   }
 }

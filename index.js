@@ -168,7 +168,7 @@ function helpText() {
     '\n【其他】\n' +
     '-生日　查看近期角色生日\n' +
     '-赛季　查看赛季结束时间\n' +
-    '-喵言喵语　随机喵言喵语\n' +
+    '-喵言喵语　随机喵言喵语（简写 -喵）\n' +
     '\n【插件管理（仅主人）】\n' +
     '-卡拉彼丘更新　拉取插件最新版本（默认自动重启）\n' +
     '-卡拉彼丘强制更新　丢弃本地改动并强制更新\n' +
@@ -238,8 +238,8 @@ export class KlbqWikiPlugin extends plugin {
       if (query === '生日' || query === '角色生日') {
         return await this.handleBirthday(e)
       }
-      // 喵言喵语
-      if (query === '喵言喵语' || query === '随机喵言喵语') {
+      // 喵言喵语（-喵 为简写）
+      if (query === '喵' || query === '喵言喵语' || query === '随机喵言喵语') {
         return await this.handleCatLanguage(e)
       }
       // 赛季

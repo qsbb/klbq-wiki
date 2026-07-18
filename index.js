@@ -48,6 +48,10 @@ const DEFAULT_CONFIG = {
   text_fallback: true,
   grid_columns: 2,
   card_width: 760,
+  // 更新成功后自动重启 Yunzai（通过 redis 标记 + process.exit，依赖 PM2 自动重启）
+  auto_restart: true,
+  // 自动重启前等待秒数（确保消息发送完成）
+  restart_delay: 3,
   custom_aliases: '',
 }
 
@@ -78,6 +82,8 @@ function saveConfig(config) {
       text_fallback: '# 【图片渲染】失败或超时后回退文字',
       grid_columns: '# 【图片布局】每行格子数（1-4）',
       card_width: '# 【图片布局】卡片最小宽度（像素，420-1200）',
+      auto_restart: '# 【插件更新】更新成功后自动重启 Yunzai（需 PM2 等进程管理器）',
+      restart_delay: '# 【插件更新】自动重启前等待秒数（1-30，确保消息发送完成）',
       custom_aliases: '# 【别名】自定义别名映射，每行一条，格式：别名=页面标题',
     }
     for (const [key, value] of Object.entries(DEFAULT_CONFIG)) {
@@ -110,7 +116,9 @@ const CONFIG_META = {
   send_detail_link:  { type: 'boolean', group: '功能开关', desc: '查询结果后发送 Wiki 链接（关闭可避免触发其他插件复读检测）' },
   text_fallback:     { type: 'boolean', group: '功能开关', desc: '图片渲染失败或超时后回退文字' },
   cat_language_image:{ type: 'boolean', group: '功能开关', desc: '喵言喵语使用图片发送' },
+  auto_restart:      { type: 'boolean', group: '插件更新', desc: '更新成功后自动重启 Yunzai（需 PM2 等进程管理器自动拉起）' },
   birthday_count:    { type: 'number',  group: '查询设置', desc: '生日查询返回角色数量（1-20）' },
+  restart_delay:     { type: 'number',  group: '插件更新', desc: '自动重启前等待秒数（1-30，确保消息发送完成）' },
   grid_columns:      { type: 'number',  group: '图片布局', desc: '图片卡片每行格子数（1-4）' },
   card_width:        { type: 'number',  group: '图片布局', desc: '图片卡片最小宽度（420-1200 像素）' },
   image_timeout:     { type: 'number',  group: '图片布局', desc: '图片渲染超时时间（1-60 秒）' },
@@ -143,7 +151,7 @@ function helpText() {
     '-赛季　查看赛季结束时间\n' +
     '-喵言喵语　随机喵言喵语\n' +
     '\n【插件管理（仅主人）】\n' +
-    '-卡拉彼丘更新　拉取插件最新版本\n' +
+    '-卡拉彼丘更新　拉取插件最新版本（默认自动重启）\n' +
     '-卡拉彼丘强制更新　丢弃本地改动并强制更新\n' +
     '-设置　查看与修改插件配置\n' +
     '\n支持 - 和 #klbq / /klbq / #卡拉彼丘 / #卡丘 前缀，支持角色别名。'
@@ -679,6 +687,7 @@ export class KlbqWikiPlugin extends plugin {
         grid_columns: [1, 4],
         card_width: [420, 1200],
         image_timeout: [1, 60],
+        restart_delay: [1, 30],
       }
       if (ranges[key]) {
         const [min, max] = ranges[key]
@@ -787,8 +796,12 @@ export class KlbqWikiPlugin extends plugin {
           text.split('\n').slice(0, 15).join('\n'),
         ]
         await e.reply(lines.join('\n'))
-        // 提示重启
-        await e.reply('请重启 Yunzai 以使更新生效。')
+        // 自动重启
+        if (this.config.auto_restart) {
+          await this.restartBot(e)
+        } else {
+          await e.reply('请重启 Yunzai 以使更新生效。')
+        }
       }
       return true
     } catch (err) {
@@ -812,5 +825,50 @@ export class KlbqWikiPlugin extends plugin {
       await e.reply(`klbq-wiki 更新失败：\n${stderr.split('\n').slice(0, 8).join('\n')}${hint}`)
       return true
     }
+  }
+
+  /**
+   * 自动重启 Yunzai
+   * 采用 Yunzai 官方重启机制：通过 redis 设置 Yz:restart 标记，然后 process.exit
+   * 依赖 PM2 等进程管理器自动拉起进程；重启后 Yunzai 会读取标记并发送"重启完成"消息
+   * @param e 消息事件
+   */
+  async restartBot(e) {
+    const delay = Math.max(1, Math.min(30, parseInt(this.config.restart_delay) || 3))
+    await e.reply(
+      [
+        `✅ 更新完成，${delay} 秒后将自动重启 Yunzai 以使更新生效...`,
+        '',
+        '重启机制：通过 redis 标记 + process.exit 实现',
+        '• 若使用 PM2 / npm start 等进程管理器，将自动拉起新进程',
+        '• 若直接运行 node app.js，需手动重新启动',
+        `• 可通过 -设置 auto_restart off 关闭自动重启`,
+      ].join('\n'),
+    )
+
+    // 延时等待消息发送完成
+    await new Promise((resolve) => setTimeout(resolve, delay * 1000))
+
+    // 设置 Yunzai 官方重启标记（重启后 Yunzai 会读取并发送提示消息）
+    try {
+      const redis = global.redis || (await import('../../lib/db/redis.js')).default
+      if (redis && typeof redis.set === 'function') {
+        const data = JSON.stringify({
+          isMaster: !!e.isMaster,
+          uin: e?.self_id || global.Bot?.uin || 0,
+          time: Date.now(),
+        })
+        // 设置 5 分钟过期，避免重启失败后残留
+        await redis.set('Yz:restart', data, { EX: 300 })
+        logger.info('[KlbqWiki] 已设置 Yz:restart 标记')
+      }
+    } catch (err) {
+      logger.warn(`[KlbqWiki] 设置重启标记失败（不影响重启）: ${err}`)
+    }
+
+    logger.info('[KlbqWiki] 正在退出进程以触发自动重启...')
+    // 退出进程：PM2 等进程管理器会自动重启
+    // 使用 exit code 1 让 PM2 识别为异常退出并重启
+    process.exit(1)
   }
 }

@@ -1,14 +1,14 @@
 # 卡拉彼丘 Wiki 查询（Yunzai 版）
 
 [![Yunzai](https://img.shields.io/badge/Yunzai-Plugin-4c8bf5)](https://github.com/TimeRainStarSky/Yunzai)
-[![Version](https://img.shields.io/badge/version-1.0.0-5c6ac4)](https://github.com/qsbb/astrbot_plugin_klbq_wiki)
+[![Version](https://img.shields.io/badge/version-1.3.0-5c6ac4)](https://github.com/qsbb/astrbot_plugin_klbq_wiki)
 
 一个面向 [Yunzai-Bot](https://github.com/TimeRainStarSky/Yunzai)（TRSS-Yunzai / Miao-Yunzai）的卡拉彼丘资料查询插件。数据来自卡拉彼丘 Biligame Wiki，支持角色、武器、皮肤、近期生日、当前赛季和喵言喵语查询。
 
 本插件移植自 [astrbot_plugin_klbq_wiki](https://github.com/qsbb/astrbot_plugin_klbq_wiki) v1.4.5，将原有的 AstrBot Python 实现完整改写为 Yunzai JavaScript 插件。
 
 - 插件名称：`klbq-wiki`
-- 当前版本：`1.0.0`
+- 当前版本：`1.3.0`
 - 作者：凌溪
 
 ## 功能特性
@@ -137,6 +137,8 @@ pnpm install cheerio
 -设置 send_detail_link on         # 开启 Wiki 链接发送
 -设置 send_detail_link off        # 关闭 Wiki 链接发送
 -设置 render_image off            # 关闭图片渲染，改为纯文字
+-设置 auto_restart off            # 关闭更新后自动重启
+-设置 restart_delay 5             # 设置重启前等待 5 秒
 -设置 grid_columns 3              # 修改图片每行格子数为 3
 -设置 birthday_count 10           # 修改生日查询返回数量为 10
 -设置 image_timeout 15            # 修改图片渲染超时为 15 秒
@@ -152,7 +154,9 @@ pnpm install cheerio
 | `send_detail_link` | 布尔 | on/off | 查询结果后发送 Wiki 链接 |
 | `text_fallback` | 布尔 | on/off | 图片渲染失败后回退文字 |
 | `cat_language_image` | 布尔 | on/off | 喵言喵语使用图片发送 |
+| `auto_restart` | 布尔 | on/off | 更新成功后自动重启 Yunzai |
 | `birthday_count` | 整数 | 1-20 | 生日查询返回角色数量 |
+| `restart_delay` | 整数 | 1-30 | 自动重启前等待秒数 |
 | `grid_columns` | 整数 | 1-4 | 图片卡片每行格子数 |
 | `card_width` | 整数 | 420-1200 | 图片卡片最小宽度（像素） |
 | `image_timeout` | 数字 | 1-60 | 图片渲染超时时间（秒） |
@@ -163,7 +167,10 @@ pnpm install cheerio
 
 1. 执行 `git pull --ff-only` 拉取最新代码
 2. 输出更新日志和当前版本号
-3. 提示重启 Yunzai 使更新生效
+3. 若 `auto_restart` 为 `true`（默认），延时 `restart_delay` 秒后自动重启 Yunzai
+4. 若 `auto_restart` 为 `false`，提示用户手动重启
+
+自动重启采用 Yunzai 官方重启机制：通过 redis 设置 `Yz:restart` 标记后 `process.exit`，依赖 PM2 等进程管理器自动拉起新进程。若直接运行 `node app.js`（未使用 PM2），进程退出后需手动重新启动。
 
 强制更新会先执行 `git reset --hard HEAD && git clean -fd` 丢弃所有本地改动（包括配置文件修改），再拉取最新版本。如需保留配置，请提前备份 `config/config.yaml`。
 
@@ -213,6 +220,8 @@ pnpm install cheerio
 | `text_fallback` | 布尔 | `true` | 图片渲染失败或超时后是否发送文字结果 |
 | `grid_columns` | 整数 | `2` | 图片卡片每行资料格子数，范围 1–4 |
 | `card_width` | 整数 | `760` | 图片卡片最小宽度，范围 420–1200 像素 |
+| `auto_restart` | 布尔 | `true` | 更新成功后自动重启 Yunzai，依赖 PM2 等进程管理器自动拉起 |
+| `restart_delay` | 整数 | `3` | 自动重启前等待秒数，范围 1–30，确保消息发送完成 |
 | `custom_aliases` | 多行文本 | 空 | 自定义别名，每行填写一条映射 |
 
 ## 与 AstrBot 版的区别

@@ -29,6 +29,17 @@ grid_columns: 2
 # 【图片布局】卡片最小宽度（像素，420-1200）
 card_width: 760
 
+# 【插件更新】更新成功后自动重启 Yunzai（需 PM2 等进程管理器）
+# 默认开启：更新完成后自动重启以加载新代码
+# 关闭后更新完成仅提示用户手动重启
+# 采用 Yunzai 官方重启机制：redis 设置 Yz:restart 标记 + process.exit
+# 若直接运行 node app.js 未使用 PM2，进程退出后需手动重新启动
+auto_restart: true
+
+# 【插件更新】自动重启前等待秒数（1-30）
+# 确保更新成功的提示消息发送完成后再重启
+restart_delay: 3
+
 # 【别名】自定义别名映射
 # 每行一条，格式：别名=页面标题，例如：心夏老师=心夏
 custom_aliases: ''

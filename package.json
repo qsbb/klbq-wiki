@@ -1,0 +1,18 @@
+{
+  "name": "klbq-wiki",
+  "version": "1.0.0",
+  "description": "卡拉彼丘 Wiki 查询插件 - 查询角色、武器、皮肤、生日、赛季与喵言喵语",
+  "main": "index.js",
+  "type": "module",
+  "author": "凌溪",
+  "license": "GPL-3.0",
+  "dependencies": {
+    "cheerio": "^1.2.0"
+  },
+  "keywords": [
+    "yunzai",
+    "klbq",
+    "卡拉彼丘",
+    "wiki"
+  ]
+}

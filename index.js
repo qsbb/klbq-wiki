@@ -189,9 +189,12 @@ export class KlbqWikiPlugin extends plugin {
         label: escapeHtml(i.label),
         value: escapeHtml(i.value),
       }))
+      // saveId 必须是文件系统安全名（不能含 URL 编码字符或中文）
+      // 因为 puppeteer 的 file:// URL 会自动解码 %XX，导致文件名不匹配
+      const saveId = 'card_' + Date.now()
       return await puppeteer.screenshot('klbq-wiki', {
         tplFile: CARD_TEMPLATE,
-        saveId: encodeURIComponent(title).slice(0, 60) || 'default',
+        saveId,
         imgType: 'jpeg',
         quality: 88,
         title: escapeHtml(title),

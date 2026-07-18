@@ -35,6 +35,7 @@ const PLUGIN_NAME = 'klbq-wiki'
 const CONFIG_DIR = `./plugins/${PLUGIN_NAME}/config`
 const CONFIG_FILE = `${CONFIG_DIR}/config.yaml`
 const CARD_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/card.html`
+const HELP_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/help.html`
 
 /** 默认配置 */
 const DEFAULT_CONFIG = {
@@ -153,28 +154,50 @@ function extractPrefix(msg) {
 }
 
 /** 帮助文本 */
-function helpText() {
-  return (
-    '卡拉彼丘 Wiki 查询帮助\n' +
-    '\n【角色与武器】\n' +
-    '-心夏　或　#klbq 心夏　查询角色资料\n' +
-    '-空境　或　#klbq 空境　查询武器资料\n' +
-    '-心夏武器　查询角色武器\n' +
-    '\n【皮肤】\n' +
-    '-心夏 皮肤　查看皮肤列表\n' +
-    '-心夏 休日冒险　查询指定皮肤\n' +
-    '-心夏 私服　查询私服皮肤\n' +
-    '宿舍皮、私皮等同于私服\n' +
-    '\n【其他】\n' +
-    '-生日　查看近期角色生日\n' +
-    '-赛季　查看赛季结束时间\n' +
-    '-喵言喵语　随机喵言喵语（简写 -喵）\n' +
-    '\n【插件管理（仅主人）】\n' +
-    '-卡拉彼丘更新　拉取插件最新版本（默认自动重启）\n' +
-    '-卡拉彼丘强制更新　丢弃本地改动并强制更新\n' +
-    '-设置　查看与修改插件配置\n' +
-    '\n支持 - 和 #klbq / /klbq / #卡拉彼丘 / #卡丘 前缀，支持角色别名。'
-  )
+/** 帮助分组数据（用于图片渲染） */
+function helpData() {
+  return [
+    {
+      name: '角色与武器',
+      items: [
+        { name: '-心夏 / #klbq 心夏', desc: '查询角色资料' },
+        { name: '-空境 / #klbq 空境', desc: '查询武器资料' },
+        { name: '-心夏武器', desc: '查询角色武器' },
+      ],
+    },
+    {
+      name: '皮肤',
+      items: [
+        { name: '-心夏 皮肤', desc: '查看皮肤列表' },
+        { name: '-心夏 休日冒险', desc: '查询指定皮肤' },
+        { name: '-心夏 私服', desc: '查询私服皮肤' },
+        { name: '宿舍皮 / 私皮', desc: '等同于私服' },
+      ],
+    },
+    {
+      name: '其他',
+      items: [
+        { name: '-生日', desc: '查看近期角色生日' },
+        { name: '-赛季', desc: '查看赛季结束时间' },
+        { name: '-喵言喵语 / -喵', desc: '随机喵言喵语' },
+      ],
+    },
+    {
+      name: '插件管理（仅主人）',
+      items: [
+        { name: '-卡拉彼丘更新', desc: '拉取插件最新版本（默认自动重启）' },
+        { name: '-卡拉彼丘强制更新', desc: '丢弃本地改动并强制更新' },
+        { name: '-设置', desc: '查看与修改插件配置' },
+      ],
+    },
+    {
+      name: '命令前缀',
+      items: [
+        { name: '- / #klbq / /klbq', desc: '前缀与关键词之间有无空格均可' },
+        { name: '#卡拉彼丘 / #卡丘', desc: '支持角色别名查询' },
+      ],
+    },
+  ]
 }
 
 /**
@@ -219,7 +242,7 @@ export class KlbqWikiPlugin extends plugin {
   async handleQuery(e, query) {
     // 帮助
     if (!query || query.toLowerCase() === 'help' || query === '帮助') {
-      return await this.sendTextCard(e, '使用帮助', helpText(), '指令说明')
+      return await this.sendHelp(e)
     }
 
     try {
@@ -262,6 +285,34 @@ export class KlbqWikiPlugin extends plugin {
       logger.error(err.stack || err)
       return await this.sendTextCard(e, '查询失败', `查询"${query}"时发生错误，已写入后台日志。`, '错误提示')
     }
+  }
+
+  /** 发送帮助卡片（分组图片，失败回退文字） */
+  async sendHelp(e) {
+    const groups = helpData()
+    if (this.config.render_image && puppeteer) {
+      const img = await this.renderHelp('使用帮助', '指令说明', groups)
+      if (img) {
+        await e.reply(img)
+        return true
+      }
+      // 渲染失败回退文字
+      const { fallback } = renderSettings(this.config)
+      if (!fallback) {
+        await e.reply('帮助图片渲染失败，请稍后重试。')
+        return true
+      }
+    }
+    // 文字回退：拼装分组文本
+    const lines = ['卡拉彼丘 Wiki 查询帮助']
+    for (const g of groups) {
+      lines.push(`\n【${g.name}】`)
+      for (const item of g.items) {
+        lines.push(`${item.name}　${item.desc}`)
+      }
+    }
+    await e.reply(lines.join('\n'))
+    return true
   }
 
   /** 通用：发送文字卡片（可选渲染为图片） */
@@ -314,6 +365,40 @@ export class KlbqWikiPlugin extends plugin {
       })
     } catch (err) {
       logger.warn(`[KlbqWiki] 图片渲染失败: ${err}`)
+      return null
+    }
+  }
+
+  /** 渲染分组卡片（帮助/设置），返回 segment 对象或 null */
+  async renderHelp(title, kind, groups) {
+    const { cardWidth, timeout } = renderSettings(this.config)
+    try {
+      // 转义所有文本字段
+      const safeGroups = groups.map((g) => ({
+        name: escapeHtml(g.name),
+        items: g.items.map((i) => ({
+          name: escapeHtml(i.name || ''),
+          desc: escapeHtml(i.desc || ''),
+          value: i.value ? escapeHtml(i.value) : '',
+        })),
+      }))
+      const saveId = 'help_' + Date.now()
+      return await puppeteer.screenshot('klbq-wiki', {
+        tplFile: HELP_TEMPLATE,
+        saveId,
+        imgType: 'jpeg',
+        quality: 88,
+        title: escapeHtml(title),
+        kind: escapeHtml(kind),
+        groups: safeGroups,
+        card_width: cardWidth,
+        pageGotoParams: {
+          timeout: timeout * 1000,
+          waitUntil: 'networkidle2',
+        },
+      })
+    } catch (err) {
+      logger.warn(`[KlbqWiki] 分组卡片渲染失败: ${err}`)
       return null
     }
   }
@@ -667,25 +752,59 @@ export class KlbqWikiPlugin extends plugin {
 
   /** 列出所有配置 */
   async _settingsList(e) {
-    const groups = {}
+    // 按 CONFIG_META 的 group 字段分组
+    const groupMap = {}
+    const groupOrder = []
     for (const [key, meta] of Object.entries(CONFIG_META)) {
-      if (!groups[meta.group]) groups[meta.group] = []
-      groups[meta.group].push({ key, ...meta })
+      if (!groupMap[meta.group]) {
+        groupMap[meta.group] = []
+        groupOrder.push(meta.group)
+      }
+      groupMap[meta.group].push({ key, ...meta })
     }
-    const lines = ['卡拉彼丘 Wiki 插件配置', '']
-    for (const [groupName, items] of Object.entries(groups)) {
-      lines.push(`【${groupName}】`)
-      for (const item of items) {
+    // 构造分组数据
+    const groups = groupOrder.map((groupName) => ({
+      name: groupName,
+      items: groupMap[groupName].map((item) => {
         const value = this.config[item.key]
         const valueStr = this._formatValue(value, item.type)
-        lines.push(`• ${item.key} = ${valueStr}`)
-        lines.push(`  ${item.desc}`)
+        return { name: item.key, desc: item.desc, value: valueStr }
+      }),
+    }))
+    // 追加一个"使用方法"分组
+    groups.push({
+      name: '使用方法',
+      items: [
+        { name: '-设置 <项名> <值>', desc: '修改配置并自动保存' },
+        { name: '-设置 <项名> on/off', desc: '布尔项快捷开关' },
+        { name: '-设置 重置', desc: '恢复全部默认配置' },
+      ],
+    })
+
+    // 尝试图片渲染
+    if (this.config.render_image && puppeteer) {
+      const img = await this.renderHelp('插件配置', '设置', groups)
+      if (img) {
+        await e.reply(img)
+        return true
+      }
+      const { fallback } = renderSettings(this.config)
+      if (!fallback) {
+        await e.reply('设置图片渲染失败，请稍后重试。')
+        return true
+      }
+    }
+    // 文字回退
+    const lines = ['卡拉彼丘 Wiki 插件配置', '']
+    for (const g of groups) {
+      lines.push(`【${g.name}】`)
+      for (const item of g.items) {
+        const valueStr = item.value ? ` = ${item.value}` : ''
+        lines.push(`• ${item.name}${valueStr}`)
+        if (item.desc) lines.push(`  ${item.desc}`)
       }
       lines.push('')
     }
-    lines.push('修改方法：-设置 <项名> <值>')
-    lines.push('布尔项可使用：-设置 <项名> on/off')
-    lines.push('重置全部：-设置 重置')
     await e.reply(lines.join('\n'))
     return true
   }

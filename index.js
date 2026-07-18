@@ -158,6 +158,37 @@ function formatBytes(bytes) {
 }
 
 /**
+ * 解析 git pull --ff-only 的输出，返回友好的摘要信息
+ * 支持两种格式：
+ *   - 中文：更新 a06ae30..72374a3 / Fast-forward
+ *   - 英文：Updating a06ae30..72374a3 / Fast-forward
+ */
+function parseGitPullOutput(text) {
+  if (!text) return null
+  // 提取 commit 范围：Updating xxx..yyy 或 更新 xxx..yyy
+  const rangeMatch = text.match(/(?:Updating|更新)\s+([0-9a-f]{7,40})\.\.([0-9a-f]{7,40})/i)
+  // 提取变更文件统计： 5 files changed, 41 insertions(+), 7 deletions(-)
+  const statsMatch = text.match(/(\d+)\s+files?\s+changed(?:,\s*(\d+)\s+insertions?\(\+\))?(?:,\s*(\d+)\s+deletions?\(-\))?/i)
+  // 提取文件变更列表（按 | 分隔的行）
+  const fileLines = text.split('\n')
+    .map((l) => l.trim())
+    .filter((l) => /^[a-zA-Z0-9_\-./]+\s*\|/.test(l))
+    .map((l) => {
+      const parts = l.split('|').map((s) => s.trim())
+      return parts[0]
+    })
+
+  return {
+    fromHash: rangeMatch ? rangeMatch[1].slice(0, 7) : null,
+    toHash: rangeMatch ? rangeMatch[2].slice(0, 7) : null,
+    filesChanged: statsMatch ? parseInt(statsMatch[1]) : (fileLines.length || 0),
+    insertions: statsMatch ? parseInt(statsMatch[2] || 0) : 0,
+    deletions: statsMatch ? parseInt(statsMatch[3] || 0) : 0,
+    files: fileLines.slice(0, 10), // 最多展示 10 个文件
+  }
+}
+
+/**
  * 从用户消息中提取命令前缀
  * 用于在卡片提示中显示与用户指令一致的前缀
  * 例如：-心夏 → '-'，#klbq 心夏 → '#klbq'，#卡拉彼丘心夏 → '#卡拉彼丘'
@@ -1099,19 +1130,52 @@ export class KlbqWikiPlugin extends plugin {
           const pkg = JSON.parse(fs.readFileSync(path.join(pluginDir, 'package.json'), 'utf8'))
           version = pkg.version || '未知'
         } catch {}
-        const lines = [
-          'klbq-wiki 更新成功！',
-          `当前版本：v${version}`,
-          '',
-          '更新日志：',
-          text.split('\n').slice(0, 15).join('\n'),
-        ]
+
+        // 解析 git pull 输出，生成友好摘要
+        const summary = parseGitPullOutput(text)
+        const lines = ['✅ klbq-wiki 更新成功！', `📦 当前版本：v${version}`]
+
+        if (summary) {
+          if (summary.fromHash && summary.toHash) {
+            lines.push(`🔄 提交：${summary.fromHash} → ${summary.toHash}`)
+          }
+          if (summary.filesChanged > 0) {
+            const stats = [`📄 变更文件：${summary.filesChanged} 个`]
+            if (summary.insertions > 0 || summary.deletions > 0) {
+              stats.push(`（+${summary.insertions} / -${summary.deletions}）`)
+            }
+            lines.push(stats.join(' '))
+          }
+          if (summary.files.length > 0) {
+            lines.push('📝 变更文件列表：')
+            for (const f of summary.files) {
+              lines.push(`  · ${f}`)
+            }
+            if (summary.filesChanged > summary.files.length) {
+              lines.push(`  · ... 等共 ${summary.filesChanged} 个文件`)
+            }
+          }
+        } else {
+          // 解析失败时回退原始输出（截断前 10 行）
+          lines.push('更新日志：')
+          lines.push(...text.split('\n').slice(0, 10))
+        }
+
+        // 合并重启提示到同一条消息，避免多条打扰
+        if (this.config.auto_restart) {
+          const delay = Math.max(1, Math.min(30, parseInt(this.config.restart_delay) || 3))
+          lines.push('')
+          lines.push(`🔄 ${delay} 秒后自动重启 Yunzai 以使更新生效...`)
+        } else {
+          lines.push('')
+          lines.push('⚠️ 请手动重启 Yunzai 以使更新生效。')
+        }
+
         await e.reply(lines.join('\n'))
+
         // 自动重启
         if (this.config.auto_restart) {
           await this.restartBot(e)
-        } else {
-          await e.reply('请重启 Yunzai 以使更新生效。')
         }
       }
       return true
@@ -1142,22 +1206,13 @@ export class KlbqWikiPlugin extends plugin {
    * 自动重启 Yunzai
    * 采用 Yunzai 官方重启机制：通过 redis 设置 Yz:restart 标记，然后 process.exit
    * 依赖 PM2 等进程管理器自动拉起进程；重启后 Yunzai 会读取标记并发送"重启完成"消息
+   * 注意：重启提示已在 handleUpdate 中发送，此处不再重复回复，只执行重启逻辑
    * @param e 消息事件
    */
   async restartBot(e) {
     const delay = Math.max(1, Math.min(30, parseInt(this.config.restart_delay) || 3))
-    await e.reply(
-      [
-        `✅ 更新完成，${delay} 秒后将自动重启 Yunzai 以使更新生效...`,
-        '',
-        '重启机制：通过 redis 标记 + process.exit 实现',
-        '• 若使用 PM2 / npm start 等进程管理器，将自动拉起新进程',
-        '• 若直接运行 node app.js，需手动重新启动',
-        `• 可通过 -设置 auto_restart off 关闭自动重启`,
-      ].join('\n'),
-    )
 
-    // 延时等待消息发送完成
+    // 延时等待消息发送完成（重启提示已在 handleUpdate 中发送）
     await new Promise((resolve) => setTimeout(resolve, delay * 1000))
 
     // 设置 Yunzai 官方重启标记（重启后 Yunzai 会读取并发送提示消息）

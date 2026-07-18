@@ -175,7 +175,7 @@ pnpm install cheerio
 | `birthday_count` | 整数 | `5` | 生日查询返回的角色数量，范围 1–20 |
 | `render_image` | 布尔 | `true` | 是否将查询结果优先渲染为图片卡片 |
 | `cat_language_image` | 布尔 | `false` | 是否将喵言喵语渲染为图片，关闭时原样发送文字 |
-| `send_detail_link` | 布尔 | `true` | 是否在查询结果后单独发送原始 Wiki 链接 |
+| `send_detail_link` | 布尔 | `false` | 是否在查询结果后单独发送原始 Wiki 链接。默认关闭，因为单独发送链接可能触发其他插件（如 lin-plugin 复读只因）的 bug。图片卡片已包含完整资料，链接非必需 |
 | `image_timeout` | 浮点数 | `8` | 图片渲染超时时间，范围 1–60 秒 |
 | `text_fallback` | 布尔 | `true` | 图片渲染失败或超时后是否发送文字结果 |
 | `grid_columns` | 整数 | `2` | 图片卡片每行资料格子数，范围 1–4 |

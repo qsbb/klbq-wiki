@@ -41,7 +41,9 @@ const DEFAULT_CONFIG = {
   birthday_count: 5,
   render_image: true,
   cat_language_image: false,
-  send_detail_link: true,
+  // 默认关闭：单独发送 Wiki 链接可能触发其他插件（如 lin-plugin 复读只因）的 bug
+  // 图片卡片已包含完整资料，链接非必需。如需开启请手动设置为 true
+  send_detail_link: false,
   image_timeout: 8,
   text_fallback: true,
   grid_columns: 2,

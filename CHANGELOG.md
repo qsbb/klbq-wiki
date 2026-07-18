@@ -1,5 +1,14 @@
 # 更新日志
 
+## 1.1.1
+
+- 修复图片发送失败 `base64://[object Object]` 问题
+  - 原因：Yunzai 的 `puppeteer.screenshot` 已返回 segment 对象，原代码二次包装导致失败
+  - 修复：直接使用返回的 segment 对象，不再二次包装
+- `send_detail_link` 默认值改为 `false`
+  - 原因：单独发送 Wiki 链接会触发其他插件（如 lin-plugin 复读只因）的 bug
+  - 图片卡片已包含完整资料，链接非必需。如需开启请手动设置为 true
+
 ## 1.1.0
 
 - 新增 `-卡拉彼丘更新` 命令：从 GitHub 拉取插件最新版本（仅主人）

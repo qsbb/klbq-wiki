@@ -146,6 +146,17 @@ function renderSettings(config) {
   return { columns, cardWidth, timeout, fallback }
 }
 
+/** 格式化字节数为人类可读字符串 */
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(1024))
+  const value = bytes / Math.pow(1024, i)
+  // 整数值不显示小数（1.0 → 1），非整数保留 1 位小数（1.5 → 1.5）
+  const formatted = value < 10 && !Number.isInteger(value) ? value.toFixed(1) : Math.round(value)
+  return `${formatted} ${units[i]}`
+}
+
 /**
  * 从用户消息中提取命令前缀
  * 用于在卡片提示中显示与用户指令一致的前缀
@@ -199,6 +210,7 @@ function helpData() {
       items: [
         { name: '-卡拉彼丘更新', desc: '拉取插件最新版本（默认自动重启）' },
         { name: '-卡拉彼丘强制更新', desc: '丢弃本地改动并强制更新' },
+        { name: '-更新资源', desc: '预下载全部角色立绘和皮肤图到本地缓存' },
         { name: '-设置', desc: '查看与修改插件配置' },
       ],
     },
@@ -269,6 +281,10 @@ export class KlbqWikiPlugin extends plugin {
       }
       if (query === '卡拉彼丘强制更新' || query === '强制更新') {
         return await this.handleUpdate(e, true)
+      }
+      // 更新图片资源缓存
+      if (query === '更新资源' || query === '卡拉彼丘更新资源' || query === '缓存资源' || query === '预下载') {
+        return await this.handleFetchResources(e)
       }
       // 插件设置
       if (query === '设置' || query === '卡拉彼丘设置' || query === '配置') {
@@ -949,6 +965,87 @@ export class KlbqWikiPlugin extends plugin {
       k.toLowerCase().startsWith(lower) || k.toLowerCase().includes(lower),
     )
     return candidates.length === 1 ? candidates[0] : null
+  }
+
+  /**
+   * 更新图片资源：预下载所有角色的立绘和皮肤图到本地缓存
+   * 仅主人可用。执行期间会逐步回复进度，避免长时间无响应。
+   */
+  async handleFetchResources(e) {
+    if (!e.isMaster) {
+      await e.reply('仅主人可使用更新资源功能。')
+      return true
+    }
+
+    // 若缓存未启用，提示用户
+    if (this.config.image_cache === false) {
+      await e.reply(
+        '⚠️ 当前图片缓存（image_cache）已关闭，预下载的图片不会被使用。\n' +
+        '请先开启缓存：\n-设置 image_cache on'
+      )
+      return true
+    }
+
+    // 开始前的缓存统计
+    const before = this.imageCache.stats()
+    await e.reply(
+      `📦 开始预下载全部角色立绘和皮肤图到本地...\n` +
+      `当前缓存：${before.count} 个文件，${formatBytes(before.sizeBytes)}\n` +
+      `这可能需要几分钟，请耐心等待。`
+    )
+
+    const startTime = Date.now()
+    let lastReportTime = Date.now()
+    let lastRoleName = ''
+
+    try {
+      const result = await this.wiki.fetchAllResources({
+        onStart: (total) => {
+          logger.info(`[KlbqWiki] 开始预下载 ${total} 个角色的资源`)
+        },
+        onRole: (role, idx, total, ok, fail) => {
+          lastRoleName = role
+          // 每 5 个角色或超过 15 秒未汇报，发送一次进度
+          if (idx % 5 === 0 || Date.now() - lastReportTime > 15000) {
+            lastReportTime = Date.now()
+            e.reply?.(`⏳ 进度：${idx}/${total}（${Math.round((idx / total) * 100)}%）\n当前：${role}`)
+              .catch(() => {})
+          }
+        },
+      })
+
+      const after = this.imageCache.stats()
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+      const newCount = Math.max(0, after.count - before.count)
+      const newSize = Math.max(0, after.sizeBytes - before.sizeBytes)
+
+      await e.reply(
+        `✅ 资源预下载完成！\n` +
+        `\n📊 本次统计：` +
+        `\n- 角色数量：${result.roles}` +
+        `\n- 立绘下载：${result.arts} 张` +
+        `\n- 皮肤下载：${result.skins} 张` +
+        `\n- 成功：${result.ok}，失败：${result.fail}` +
+        `\n- 耗时：${elapsed} 秒` +
+        `\n\n💾 本地缓存：` +
+        `\n- 新增文件：${newCount} 个` +
+        `\n- 新增大小：${formatBytes(newSize)}` +
+        `\n- 总计文件：${after.count} 个` +
+        `\n- 总计大小：${formatBytes(after.sizeBytes)}` +
+        `\n- 存储目录：${after.dir}` +
+        `\n\n之后查询角色和皮肤将直接读取本地缓存，图片加载速度大幅提升。`
+      )
+      return true
+    } catch (err) {
+      logger.error(`[KlbqWiki] 资源预下载失败: ${err}`)
+      logger.error(err.stack || err)
+      const after = this.imageCache.stats()
+      await e.reply(
+        `❌ 资源预下载过程中断：${err.message || err}\n` +
+        `已缓存 ${after.count} 个文件。可稍后重新执行 -更新资源 继续。`
+      )
+      return true
+    }
   }
 
   /**

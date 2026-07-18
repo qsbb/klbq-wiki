@@ -36,6 +36,7 @@ const CONFIG_DIR = `./plugins/${PLUGIN_NAME}/config`
 const CONFIG_FILE = `${CONFIG_DIR}/config.yaml`
 const CARD_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/card.html`
 const HELP_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/help.html`
+const BIRTHDAY_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/birthday.html`
 
 /** 默认配置 */
 const DEFAULT_CONFIG = {
@@ -477,10 +478,68 @@ export class KlbqWikiPlugin extends plugin {
     const count = Math.max(1, Math.min(20, parseInt(this.config.birthday_count) || 5))
     upcoming.sort((a, b) => a.days - b.days || a.month - b.month || a.day - b.day || a.name.localeCompare(b.name))
 
+    const list = upcoming.slice(0, count)
+    const hero = list[0]
+    const others = list.slice(1)
+
+    // 尝试获取最近生日角色的随机立绘
+    let artUrl = ''
+    if (this.config.render_image && puppeteer) {
+      try {
+        artUrl = (await this.wiki.getCharacterArt(hero.name)) || ''
+      } catch (err) {
+        logger.warn(`[KlbqWiki] 获取 ${hero.name} 立绘失败: ${err}`)
+      }
+    }
+
+    const when = (days) => (days === 0 ? '今天' : days === 1 ? '明天' : `还有 ${days} 天`)
+    const dateStr = (m, d) => `${m}月${d}日`
+
+    // 图片渲染
+    if (this.config.render_image && puppeteer) {
+      const { cardWidth, timeout, fallback } = renderSettings(this.config)
+      try {
+        const img = await puppeteer.screenshot('klbq-wiki', {
+          tplFile: BIRTHDAY_TEMPLATE,
+          saveId: 'birthday_' + Date.now(),
+          imgType: 'jpeg',
+          quality: 88,
+          title: '近期角色生日',
+          kind: `最近 ${count} 个角色生日（Asia/Shanghai）`,
+          hero: {
+            name: hero.name,
+            date: dateStr(hero.month, hero.day),
+            countdown: when(hero.days),
+            art: artUrl,
+          },
+          others: others.map((item) => ({
+            name: item.name,
+            date: dateStr(item.month, item.day),
+            countdown: when(item.days),
+          })),
+          card_width: cardWidth,
+          pageGotoParams: {
+            timeout: timeout * 1000,
+            waitUntil: 'networkidle2',
+          },
+        })
+        if (img) {
+          await e.reply(img)
+          return true
+        }
+      } catch (err) {
+        logger.warn(`[KlbqWiki] 生日卡片渲染失败: ${err}`)
+        if (!fallback) {
+          await e.reply('生日卡片渲染失败，请稍后重试。')
+          return true
+        }
+      }
+    }
+
+    // 文字回退
     const lines = [`最近 ${count} 个角色生日（Asia/Shanghai）：`]
-    for (const item of upcoming.slice(0, count)) {
-      const when = item.days === 0 ? '今天' : `还有 ${item.days} 天`
-      lines.push(`${item.month}月${item.day}日　${item.name}（${when}）`)
+    for (const item of list) {
+      lines.push(`${dateStr(item.month, item.day)}　${item.name}（${when(item.days)}）`)
     }
     return await this.sendTextCard(e, '近期角色生日', lines.join('\n'), '生日查询')
   }

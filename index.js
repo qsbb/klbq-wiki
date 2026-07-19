@@ -371,7 +371,7 @@ export class KlbqWikiPlugin extends plugin {
             }
           }
         }
-        // 再遍历别名表做前缀匹配（处理具体皮肤名，如"猎虎裁恶"、"机动天使"）
+        // 再遍历别名表做前缀匹配（处理具体皮肤名，如"猎虎裁恶"、"机动天使"、"危险游戏"）
         if (!skinDispatched) {
           // 按别名长度降序，优先匹配长别名（如"哈基米雪儿"优先于"哈基米"）
           const aliasKeys = [...this.aliasMap.keys()].sort((a, b) => b.length - a.length)
@@ -379,8 +379,9 @@ export class KlbqWikiPlugin extends plugin {
             if (query.toLowerCase().startsWith(aliasKey)) {
               const rolePart = query.slice(0, aliasKey.length)
               const skinPart = query.slice(aliasKey.length)
-              // 角色部分和皮肤部分都至少 2 个字符
-              if (rolePart.length >= 2 && skinPart.length >= 2) {
+              // 角色部分至少 1 个字符（单字符角色名如"明/信/令"也支持），
+              // 皮肤部分至少 2 个字符，避免误匹配
+              if (rolePart.length >= 1 && skinPart.length >= 2) {
                 skinDispatched = true
                 return await this.handleSkin(e, rolePart, skinPart)
               }

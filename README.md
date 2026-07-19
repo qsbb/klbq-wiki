@@ -1,14 +1,14 @@
 # 卡拉彼丘 Wiki 查询（Yunzai 版）
 
 [![Yunzai](https://img.shields.io/badge/Yunzai-Plugin-4c8bf5)](https://github.com/TimeRainStarSky/Yunzai)
-[![Version](https://img.shields.io/badge/version-1.8.5-5c6ac4)](https://github.com/qsbb/astrbot_plugin_klbq_wiki)
+[![Version](https://img.shields.io/badge/version-1.8.6-5c6ac4)](https://github.com/qsbb/astrbot_plugin_klbq_wiki)
 
 一个面向 [Yunzai-Bot](https://github.com/TimeRainStarSky/Yunzai)（TRSS-Yunzai / Miao-Yunzai）的卡拉彼丘资料查询插件。数据来自卡拉彼丘 Biligame Wiki，支持角色、武器、皮肤、近期生日、当前赛季和喵言喵语查询。
 
 本插件移植自 [astrbot_plugin_klbq_wiki](https://github.com/qsbb/astrbot_plugin_klbq_wiki) v1.4.5，将原有的 AstrBot Python 实现完整改写为 Yunzai JavaScript 插件。
 
 - 插件名称：`klbq-wiki`
-- 当前版本：`1.8.5`
+- 当前版本：`1.8.6`
 - 作者：凌溪
 
 ## 功能特性

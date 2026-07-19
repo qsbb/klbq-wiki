@@ -39,6 +39,7 @@ const CARD_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/card.html`
 const HELP_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/help.html`
 const BIRTHDAY_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/birthday.html`
 const CALENDAR_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/calendar.html`
+const ACTIVITIES_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/activities.html`
 
 /** 默认配置 */
 const DEFAULT_CONFIG = {
@@ -758,7 +759,7 @@ export class KlbqWikiPlugin extends plugin {
     return await this.sendTextCard(e, '卡拉彼丘日历', lines.join('\n'), '日历查询')
   }
 
-  /** 活动查询：显示当前进行中的活动图片 */
+  /** 活动查询：以图片卡片显示当前正在进行的活动 */
   async handleActivities(e) {
     const events = await this.wiki.calendarEvents().catch((err) => {
       logger.warn(`[KlbqWiki] 获取活动数据失败: ${err}`)
@@ -771,37 +772,63 @@ export class KlbqWikiPlugin extends plugin {
     }
 
     // 只显示正在进行中（未结束、已开始）的活动
-    const ongoing = events.filter((ev) => !ev.ended && !ev.notStarted && ev.image)
+    const ongoing = events.filter((ev) => !ev.ended && !ev.notStarted)
     if (!ongoing.length) {
       await e.reply('当前没有正在进行的活动。')
       return true
     }
 
-    // 文字摘要
-    const lines = ['【当前活动】', '']
-    for (const ev of ongoing) {
-      lines.push(`[${ev.type}] ${ev.title}`)
-      lines.push(`  ${ev.status}（止 ${ev.end}）`)
-      if (ev.url) lines.push(`  详情：${ev.url}`)
-      lines.push('')
-    }
-    lines.push(`共 ${ongoing.length} 个活动正在进行中。`)
-    await e.reply(lines.join('\n'))
+    const typeLabels = { 赛季: '赛季', 活动: '活动', 奖池: '奖池' }
+    const activitiesView = ongoing.map((ev) => {
+      const typeLabel = typeLabels[ev.type] || ev.type
+      const typeClass = ev.type === '赛季' ? 'season' : ev.type === '活动' ? 'activity' : ev.type === '奖池' ? 'pool' : 'other'
+      const urgent = ev.daysRemaining <= 3
+      return { ...ev, typeLabel, typeClass, urgent }
+    })
 
-    // 逐个发送活动图片（通过图片缓存，本地优先）
-    const typeLabel = (t) => (t === '赛季' ? '赛季' : t === '活动' ? '活动' : t === '奖池' ? '奖池' : t)
-    for (const ev of ongoing) {
+    const now = new Date()
+    const pad = (n) => String(n).padStart(2, '0')
+    const nowStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+
+    // 图片渲染
+    if (this.config.render_image && puppeteer) {
+      const { cardWidth, timeout, fallback } = renderSettings(this.config)
       try {
-        const localPath = await this.imageCache.get(ev.image)
-        const caption = `[${typeLabel(ev.type)}] ${ev.title}\n${ev.status}（止 ${ev.end}）`
-        // segment.image 同时支持本地路径和远程 URL
-        await e.reply([segment.image(localPath), `\n${caption}`])
+        const img = await puppeteer.screenshot('klbq-wiki', {
+          tplFile: ACTIVITIES_TEMPLATE,
+          saveId: 'activities_' + Date.now(),
+          imgType: 'jpeg',
+          quality: 88,
+          title: '当前活动',
+          kind: `共 ${activitiesView.length} 个活动正在进行中`,
+          updated: nowStr,
+          activities: activitiesView,
+          card_width: cardWidth,
+          pageGotoParams: {
+            timeout: timeout * 1000,
+            waitUntil: 'networkidle2',
+          },
+        })
+        if (img) {
+          await e.reply(img)
+          return true
+        }
       } catch (err) {
-        logger.warn(`[KlbqWiki] 发送活动图片失败: ${ev.title} - ${err}`)
-        await e.reply(`[${typeLabel(ev.type)}] ${ev.title}\n${ev.status}（止 ${ev.end}）\n图片加载失败：${err}`)
+        logger.warn(`[KlbqWiki] 活动卡片渲染失败: ${err}`)
+        if (!fallback) {
+          await e.reply('活动卡片渲染失败，请稍后重试。')
+          return true
+        }
       }
     }
-    return true
+
+    // 文字回退
+    const lines = [`更新时间：${nowStr}`, '', `共 ${activitiesView.length} 个活动正在进行中：`, '']
+    for (const ev of activitiesView) {
+      lines.push(`[${ev.typeLabel}] ${ev.title}`)
+      lines.push(`  ${ev.status}（止 ${ev.end}）`)
+    }
+    return await this.sendTextCard(e, '当前活动', lines.join('\n'), '活动查询')
   }
 
   /** 皮肤查询 */

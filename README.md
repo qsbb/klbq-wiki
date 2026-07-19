@@ -1,14 +1,14 @@
 # 卡拉彼丘 Wiki 查询（Yunzai 版）
 
 [![Yunzai](https://img.shields.io/badge/Yunzai-Plugin-4c8bf5)](https://github.com/TimeRainStarSky/Yunzai)
-[![Version](https://img.shields.io/badge/version-1.8.1-5c6ac4)](https://github.com/qsbb/astrbot_plugin_klbq_wiki)
+[![Version](https://img.shields.io/badge/version-1.8.2-5c6ac4)](https://github.com/qsbb/astrbot_plugin_klbq_wiki)
 
 一个面向 [Yunzai-Bot](https://github.com/TimeRainStarSky/Yunzai)（TRSS-Yunzai / Miao-Yunzai）的卡拉彼丘资料查询插件。数据来自卡拉彼丘 Biligame Wiki，支持角色、武器、皮肤、近期生日、当前赛季和喵言喵语查询。
 
 本插件移植自 [astrbot_plugin_klbq_wiki](https://github.com/qsbb/astrbot_plugin_klbq_wiki) v1.4.5，将原有的 AstrBot Python 实现完整改写为 Yunzai JavaScript 插件。
 
 - 插件名称：`klbq-wiki`
-- 当前版本：`1.8.1`
+- 当前版本：`1.8.2`
 - 作者：凌溪
 
 ## 功能特性
@@ -113,7 +113,7 @@ pnpm install cheerio
 | `-日历` | 可视化展示活动倒计时（赛季/活动/奖池）与当月角色生日 |
 | `-活动日历` | 与 `-日历` 相同 |
 | `-倒计时` | 与 `-日历` 相同 |
-| `-活动` | 显示当前正在进行的活动图片与详情 |
+| `-活动` | 以图片卡片显示当前正在进行的活动（含活动图片、倒计时、进度条） |
 | `-当前活动` | 与 `-活动` 相同 |
 | `-赛季` | 返回当前赛季名称、剩余时间和结束日期 |
 | `-赛季结束` | 与 `-赛季` 相同 |

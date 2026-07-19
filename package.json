@@ -1,6 +1,6 @@
 {
   "name": "klbq-wiki",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "description": "卡拉彼丘 Wiki 查询插件 - 查询角色、武器、皮肤、生日、赛季与喵言喵语",
   "main": "index.js",
   "type": "module",

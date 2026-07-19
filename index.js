@@ -302,95 +302,84 @@ export class KlbqWikiPlugin extends plugin {
     return await this.handleQuery(e, query)
   }
 
+  /** 命令分派规则表（正则匹配，按顺序执行，命中即返回） */
+  _dispatchRules = [
+    // 帮助
+    { reg: /^(help|帮助)$/i, fn: (self, e) => self.sendHelp(e) },
+    // 插件更新
+    { reg: /^(卡拉彼丘更新|更新)$/, fn: (self, e) => self.handleUpdate(e, false) },
+    { reg: /^(卡拉彼丘强制更新|强制更新)$/, fn: (self, e) => self.handleUpdate(e, true) },
+    // 更新图片资源缓存
+    { reg: /^(更新资源|卡拉彼丘更新资源|缓存资源|预下载)$/, fn: (self, e) => self.handleFetchResources(e) },
+    // 插件设置
+    { reg: /^(设置|卡拉彼丘设置|配置)$/, fn: (self, e) => self.handleSettings(e) },
+    // 生日
+    { reg: /^(生日|角色生日)$/, fn: (self, e) => self.handleBirthday(e) },
+    // 喵言喵语
+    { reg: /^(喵|喵言喵语|随机喵言喵语)$/, fn: (self, e) => self.handleCatLanguage(e) },
+    // 赛季
+    { reg: /^(赛季|赛季结束)$/, fn: (self, e) => self.handleSeason(e) },
+    // 日历
+    { reg: /^(日历|活动日历|倒计时)$/, fn: (self, e) => self.handleCalendar(e) },
+    // 活动
+    { reg: /^(活动|当前活动)$/, fn: (self, e) => self.handleActivities(e) },
+    // 皮肤：角色名 皮肤名（空格分隔）
+    { reg: /^(.+?)\s+(.+)$/, fn: async (self, e, m) => {
+      const role = m[1], skin = m[2]
+      if (skin === '武器' || skin === '的武器') {
+        return await self.handleLookup(e, `${role}武器`)
+      }
+      return await self.handleSkin(e, role, skin)
+    }},
+    // 单参数：尝试皮肤前缀匹配（无空格皮肤查询）
+    { reg: /^(.+)$/, fn: async (self, e, m) => await self.trySkinDispatch(e, m[1]) },
+  ]
+
+  /** 尝试皮肤前缀匹配，失败则走条目查询 */
+  async trySkinDispatch(e, query) {
+    if (query) {
+      const skinSuffixes = ['私服', '宿舍皮', '私皮', '皮肤']
+      // 优先匹配固定皮肤后缀
+      for (const suffix of skinSuffixes) {
+        if (query.endsWith(suffix) && query.length > suffix.length) {
+          const rolePart = query.slice(0, -suffix.length)
+          const roleResolved = this.aliasMap.get(rolePart.toLowerCase())
+          if (roleResolved) {
+            return await this.handleSkin(e, rolePart, suffix)
+          }
+        }
+      }
+      // 再遍历别名表做前缀匹配（处理具体皮肤名，如"猎虎裁恶"、"机动天使"、"危险游戏"）
+      // 按别名长度降序，优先匹配长别名（如"哈基米雪儿"优先于"哈基米"）
+      const aliasKeys = [...this.aliasMap.keys()].sort((a, b) => b.length - a.length)
+      for (const aliasKey of aliasKeys) {
+        if (query.toLowerCase().startsWith(aliasKey)) {
+          const rolePart = query.slice(0, aliasKey.length)
+          const skinPart = query.slice(aliasKey.length)
+          // 角色部分至少 1 个字符（单字符角色名如"明/信/令"也支持），
+          // 皮肤部分至少 2 个字符，避免误匹配
+          if (rolePart.length >= 1 && skinPart.length >= 2) {
+            return await this.handleSkin(e, rolePart, skinPart)
+          }
+        }
+      }
+    }
+    // 未命中皮肤查询，走条目查询
+    return await this.handleLookup(e, query)
+  }
+
   /** 分派查询 */
   async handleQuery(e, query) {
-    // 帮助
-    if (!query || query.toLowerCase() === 'help' || query === '帮助') {
-      return await this.sendHelp(e)
-    }
+    if (!query) return await this.sendHelp(e)
 
     try {
-      // 插件更新
-      if (query === '卡拉彼丘更新' || query === '更新') {
-        return await this.handleUpdate(e, false)
-      }
-      if (query === '卡拉彼丘强制更新' || query === '强制更新') {
-        return await this.handleUpdate(e, true)
-      }
-      // 更新图片资源缓存
-      if (query === '更新资源' || query === '卡拉彼丘更新资源' || query === '缓存资源' || query === '预下载') {
-        return await this.handleFetchResources(e)
-      }
-      // 插件设置
-      if (query === '设置' || query === '卡拉彼丘设置' || query === '配置') {
-        return await this.handleSettings(e)
-      }
-      // 生日
-      if (query === '生日' || query === '角色生日') {
-        return await this.handleBirthday(e)
-      }
-      // 喵言喵语（-喵 为简写）
-      if (query === '喵' || query === '喵言喵语' || query === '随机喵言喵语') {
-        return await this.handleCatLanguage(e)
-      }
-      // 赛季
-      if (query === '赛季' || query === '赛季结束') {
-        return await this.handleSeason(e)
-      }
-      // 日历（倒计时 + 生日）
-      if (query === '日历' || query === '活动日历' || query === '倒计时') {
-        return await this.handleCalendar(e)
-      }
-      // 活动（显示当前活动图片）
-      if (query === '活动' || query === '当前活动') {
-        return await this.handleActivities(e)
-      }
-      // 皮肤：角色名 皮肤名
-      const parts = query.split(/\s+/)
-      if (parts.length === 2) {
-        if (parts[1] === '武器' || parts[1] === '的武器') {
-          return await this.handleLookup(e, `${parts[0]}武器`)
-        }
-        return await this.handleSkin(e, parts[0], parts[1])
-      }
-
-      // 皮肤：角色名+皮肤名（无空格，如"心夏私服"、"糖猫猎虎裁恶"、"心夏机动天使"）
-      // 遍历别名表，若查询以某个角色别名开头且剩余部分非空，则分派到皮肤查询
-      // 要求角色部分和皮肤部分都至少 2 个字符，避免误匹配
-      if (parts.length === 1) {
-        const skinSuffixes = ['私服', '宿舍皮', '私皮', '皮肤']
-        let skinDispatched = false
-        // 优先匹配固定皮肤后缀
-        for (const suffix of skinSuffixes) {
-          if (query.endsWith(suffix) && query.length > suffix.length) {
-            const rolePart = query.slice(0, -suffix.length)
-            const roleResolved = this.aliasMap.get(rolePart.toLowerCase())
-            if (roleResolved) {
-              skinDispatched = true
-              return await this.handleSkin(e, rolePart, suffix)
-            }
-          }
-        }
-        // 再遍历别名表做前缀匹配（处理具体皮肤名，如"猎虎裁恶"、"机动天使"、"危险游戏"）
-        if (!skinDispatched) {
-          // 按别名长度降序，优先匹配长别名（如"哈基米雪儿"优先于"哈基米"）
-          const aliasKeys = [...this.aliasMap.keys()].sort((a, b) => b.length - a.length)
-          for (const aliasKey of aliasKeys) {
-            if (query.toLowerCase().startsWith(aliasKey)) {
-              const rolePart = query.slice(0, aliasKey.length)
-              const skinPart = query.slice(aliasKey.length)
-              // 角色部分至少 1 个字符（单字符角色名如"明/信/令"也支持），
-              // 皮肤部分至少 2 个字符，避免误匹配
-              if (rolePart.length >= 1 && skinPart.length >= 2) {
-                skinDispatched = true
-                return await this.handleSkin(e, rolePart, skinPart)
-              }
-            }
-          }
+      for (const rule of this._dispatchRules) {
+        const m = query.match(rule.reg)
+        if (m) {
+          return await rule.fn(this, e, m)
         }
       }
-
-      // 角色或武器查询
+      // 兜底：条目查询
       return await this.handleLookup(e, query)
     } catch (err) {
       logger.error(`[KlbqWiki] 查询异常: query=${query}, error=${err}`)

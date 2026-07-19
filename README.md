@@ -1,14 +1,14 @@
 # 卡拉彼丘 Wiki 查询（Yunzai 版）
 
 [![Yunzai](https://img.shields.io/badge/Yunzai-Plugin-4c8bf5)](https://github.com/TimeRainStarSky/Yunzai)
-[![Version](https://img.shields.io/badge/version-1.8.6-5c6ac4)](https://github.com/qsbb/astrbot_plugin_klbq_wiki)
+[![Version](https://img.shields.io/badge/version-1.9.0-5c6ac4)](https://github.com/qsbb/astrbot_plugin_klbq_wiki)
 
 一个面向 [Yunzai-Bot](https://github.com/TimeRainStarSky/Yunzai)（TRSS-Yunzai / Miao-Yunzai）的卡拉彼丘资料查询插件。数据来自卡拉彼丘 Biligame Wiki，支持角色、武器、皮肤、近期生日、当前赛季和喵言喵语查询。
 
 本插件移植自 [astrbot_plugin_klbq_wiki](https://github.com/qsbb/astrbot_plugin_klbq_wiki) v1.4.5，将原有的 AstrBot Python 实现完整改写为 Yunzai JavaScript 插件。
 
 - 插件名称：`klbq-wiki`
-- 当前版本：`1.8.6`
+- 当前版本：`1.9.0`
 - 作者：凌溪
 
 ## 功能特性
@@ -202,7 +202,29 @@ pnpm install cheerio
 
 英文别名不区分大小写，例如 `lv`、`LV` 和 `Lv` 均可查询拉薇。
 
-如需补充自己的别名，可在 `config/config.yaml` 的 `custom_aliases` 中按行填写：
+如需补充自己的别名，有两种方式：
+
+**方式一：YAML 配置文件（推荐，支持热更新）**
+
+创建 `plugins/klbq-wiki/config/aliases.yaml`，格式与 `defSet/aliases.yaml` 一致：
+
+```yaml
+# 自定义别名（覆盖默认配置中同角色名的别名）
+心夏:
+  - 心夏老师
+  - 志木老师
+
+# 新增角色别名
+新角色:
+  - 新角色别名1
+  - 新角色别名2
+```
+
+修改后无需重启，插件会自动监听文件变更并重新加载。
+
+**方式二：config.yaml 的 custom_aliases（旧格式，仍兼容）**
+
+在 `config/config.yaml` 的 `custom_aliases` 中按行填写：
 
 ```text
 心夏老师=心夏

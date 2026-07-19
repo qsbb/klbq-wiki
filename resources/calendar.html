@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; width: 100%; min-width: 0; min-height: 0; background: #10182f; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; overflow: hidden; }
+body { display: block; }
+.klbq-card { width: 100%; min-width: {{card_width}}px; position: relative; overflow: hidden; padding: 34px; color: #edf7ff; background: linear-gradient(135deg, #10182f 0%, #182a55 48%, #5d3ca0 100%); }
+.glow { position: absolute; right: -100px; top: -120px; width: 360px; height: 360px; border-radius: 50%; background: radial-gradient(circle, rgba(118, 221, 255, .48), rgba(118, 221, 255, 0) 68%); pointer-events: none; }
+.glow2 { position: absolute; left: -80px; bottom: -100px; width: 280px; height: 280px; border-radius: 50%; background: radial-gradient(circle, rgba(255, 200, 120, .35), rgba(255, 200, 120, 0) 70%); pointer-events: none; }
+.header { position: relative; display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 22px; }
+.tag { display: inline-block; padding: 7px 14px; border-radius: 999px; background: rgba(255, 255, 255, .14); color: #aee9ff; font-size: 20px; letter-spacing: 1px; }
+.title { margin-top: 12px; font-size: 42px; font-weight: 800; text-shadow: 0 4px 16px rgba(0, 0, 0, .28); }
+.subtitle { margin-top: 8px; color: #c6d5ff; font-size: 20px; }
+.updated { color: rgba(237, 247, 255, .62); font-size: 16px; text-align: right; }
+.section-title { position: relative; font-size: 24px; font-weight: 700; color: #aee9ff; margin: 24px 0 14px; padding-left: 14px; border-left: 4px solid #76ddff; }
+.section-title:first-of-type { margin-top: 8px; }
+/* 倒计时事件卡片 */
+.event { position: relative; display: flex; align-items: center; gap: 16px; padding: 16px 18px; border-radius: 14px; background: rgba(255, 255, 255, .10); border: 1px solid rgba(255, 255, 255, .10); margin-bottom: 10px; }
+.event.ended { opacity: .55; }
+.event-type { flex-shrink: 0; min-width: 56px; text-align: center; padding: 6px 10px; border-radius: 10px; font-size: 16px; font-weight: 700; letter-spacing: 1px; }
+.event-type.type-season { background: rgba(255, 110, 110, .22); color: #ffb3b3; border: 1px solid rgba(255, 110, 110, .42); }
+.event-type.type-activity { background: rgba(118, 221, 255, .22); color: #aee9ff; border: 1px solid rgba(118, 221, 255, .42); }
+.event-type.type-pool { background: rgba(255, 200, 120, .22); color: #ffe89a; border: 1px solid rgba(255, 200, 120, .42); }
+.event-type.type-other { background: rgba(180, 180, 200, .18); color: #c6d5ff; border: 1px solid rgba(180, 180, 200, .32); }
+.event-main { flex: 1; min-width: 0; }
+.event-title { font-size: 22px; font-weight: 700; color: #ffffff; margin-bottom: 6px; word-break: break-all; overflow-wrap: anywhere; }
+.event-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; color: #c6d5ff; font-size: 16px; }
+.event-meta span { white-space: nowrap; }
+.event-status { flex-shrink: 0; text-align: right; }
+.event-countdown { font-size: 22px; font-weight: 800; color: #fff2a8; }
+.event-countdown.urgent { color: #ff8a8a; }
+.event-countdown.ended { color: #888; font-weight: 600; }
+.event-progress { width: 100%; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .12); margin-top: 8px; overflow: hidden; }
+.event-progress-bar { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #76ddff, #b69cff); transition: width .3s; }
+.event-progress-bar.urgent { background: linear-gradient(90deg, #ffb38a, #ff6a6a); }
+.event-progress-bar.ended { background: #555; }
+/* 生日列表 */
+.birthday-list { position: relative; display: flex; flex-direction: column; gap: 8px; }
+.birthday-row { display: flex; align-items: center; padding: 12px 16px; border-radius: 12px; background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .08); }
+.birthday-row.today { background: rgba(255, 230, 125, .18); border-color: rgba(255, 230, 125, .5); }
+.birthday-name { flex: 1; color: #ffffff; font-size: 20px; font-weight: 600; word-break: break-all; }
+.birthday-date { color: #c6d5ff; font-size: 18px; flex-shrink: 0; margin: 0 14px; }
+.birthday-countdown { color: #fff2a8; font-size: 18px; font-weight: 700; flex-shrink: 0; min-width: 80px; text-align: right; }
+.birthday-countdown.today { color: #ffe89a; }
+.footer { position: relative; margin-top: 22px; color: rgba(237, 247, 255, .62); font-size: 16px; text-align: right; }
+</style>
+</head>
+<body>
+<div id="container" class="klbq-card">
+  <div class="glow"></div>
+  <div class="glow2"></div>
+  <div class="header">
+    <div>
+      <div class="tag">卡拉彼丘 Wiki</div>
+      <div class="title">{{title}}</div>
+      <div class="subtitle">{{kind}}</div>
+    </div>
+    <div class="updated">更新时间：{{updated}}</div>
+  </div>
+
+  {{if events.length}}
+  <div class="section-title">正在进行与即将结束</div>
+  {{each events}}
+  <div class="event{{$value.ended ? ' ended' : ''}}">
+    <div class="event-type type-{{$value.typeClass}}">{{$value.typeLabel}}</div>
+    <div class="event-main">
+      <div class="event-title">{{$value.title}}</div>
+      <div class="event-meta">
+        {{if $value.start}}<span>起 {{$value.start}}</span>{{/if}}
+        <span>止 {{$value.end}}</span>
+        {{if $value.daysTotal > 0}}<span>为期 {{$value.daysTotal}} 天</span>{{/if}}
+      </div>
+      <div class="event-progress">
+        <div class="event-progress-bar{{$value.urgent ? ' urgent' : ''}}{{$value.ended ? ' ended' : ''}}" style="width: {{$value.progress}}%"></div>
+      </div>
+    </div>
+    <div class="event-status">
+      <div class="event-countdown{{$value.urgent ? ' urgent' : ''}}{{$value.ended ? ' ended' : ''}}">{{$value.status}}</div>
+    </div>
+  </div>
+  {{/each}}
+  {{/if}}
+
+  {{if birthdays.length}}
+  <div class="section-title">近期角色生日</div>
+  <div class="birthday-list">
+    {{each birthdays}}
+    <div class="birthday-row{{$value.isToday ? ' today' : ''}}">
+      <div class="birthday-name">{{$value.name}}</div>
+      <div class="birthday-date">{{$value.date}}</div>
+      <div class="birthday-countdown{{$value.isToday ? ' today' : ''}}">{{$value.countdown}}</div>
+    </div>
+    {{/each}}
+  </div>
+  {{/if}}
+
+  <div class="footer">数据来源：wiki.biligame.com/klbq · Generated by klbq-wiki</div>
+</div>
+</body>
+</html>

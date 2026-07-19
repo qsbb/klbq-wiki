@@ -38,6 +38,7 @@ const CONFIG_FILE = `${CONFIG_DIR}/config.yaml`
 const CARD_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/card.html`
 const HELP_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/help.html`
 const BIRTHDAY_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/birthday.html`
+const CALENDAR_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/calendar.html`
 
 /** 默认配置 */
 const DEFAULT_CONFIG = {
@@ -232,6 +233,7 @@ function helpData() {
       name: '其他',
       items: [
         { name: '-生日', desc: '查看近期角色生日' },
+        { name: '-日历', desc: '查看活动倒计时与角色生日日历' },
         { name: '-赛季', desc: '查看赛季结束时间' },
         { name: '-喵言喵语 / -喵', desc: '随机喵言喵语' },
       ],
@@ -332,6 +334,10 @@ export class KlbqWikiPlugin extends plugin {
       // 赛季
       if (query === '赛季' || query === '赛季结束') {
         return await this.handleSeason(e)
+      }
+      // 日历（倒计时 + 生日）
+      if (query === '日历' || query === '活动日历' || query === '倒计时') {
+        return await this.handleCalendar(e)
       }
       // 皮肤：角色名 皮肤名
       const parts = query.split(/\s+/)
@@ -624,6 +630,113 @@ export class KlbqWikiPlugin extends plugin {
   async handleSeason(e) {
     const info = await this.wiki.seasonInfo()
     return await this.sendTextCard(e, info.title, info.text, '赛季信息')
+  }
+
+  /** 日历查询：倒计时事件 + 角色生日 */
+  async handleCalendar(e) {
+    // 并行获取倒计时事件和生日数据
+    const [events, birthdayRows] = await Promise.all([
+      this.wiki.calendarEvents().catch((err) => {
+        logger.warn(`[KlbqWiki] 获取倒计时事件失败: ${err}`)
+        return []
+      }),
+      this.wiki.birthdays().catch((err) => {
+        logger.warn(`[KlbqWiki] 获取生日数据失败: ${err}`)
+        return []
+      }),
+    ])
+
+    if (!events.length && !birthdayRows.length) {
+      await e.reply('暂无日历数据，请稍后重试。')
+      return true
+    }
+
+    // 处理倒计时事件：分类标签、紧急程度
+    const typeLabels = { 赛季: '赛季', 活动: '活动', 奖池: '奖池' }
+    const eventsView = events.map((ev) => {
+      const typeLabel = typeLabels[ev.type] || ev.type
+      const typeClass = ev.type === '赛季' ? 'season' : ev.type === '活动' ? 'activity' : ev.type === '奖池' ? 'pool' : 'other'
+      // 紧急：3 天内结束
+      const urgent = !ev.ended && !ev.notStarted && ev.daysRemaining <= 3
+      return { ...ev, typeLabel, typeClass, urgent }
+    })
+
+    // 处理生日数据：计算倒计时，取最近 8 个
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const birthdayList = birthdayRows
+      .map((row) => {
+        let target = new Date(today.getFullYear(), row.month - 1, row.day)
+        if (target < today) target = new Date(today.getFullYear() + 1, row.month - 1, row.day)
+        const days = Math.floor((target - today) / 86400000)
+        return { name: row.name, month: row.month, day: row.day, days }
+      })
+      .sort((a, b) => a.days - b.days || a.month - b.month || a.day - b.day)
+      .slice(0, 8)
+
+    const when = (days) => (days === 0 ? '今天' : days === 1 ? '明天' : `${days} 天后`)
+    const dateStr = (m, d) => `${m}月${d}日`
+    const birthdaysView = birthdayList.map((b) => ({
+      name: b.name,
+      date: dateStr(b.month, b.day),
+      countdown: when(b.days),
+      isToday: b.days === 0,
+    }))
+
+    const nowStr = (() => {
+      const pad = (n) => String(n).padStart(2, '0')
+      return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+    })()
+
+    // 图片渲染
+    if (this.config.render_image && puppeteer) {
+      const { cardWidth, timeout, fallback } = renderSettings(this.config)
+      try {
+        const img = await puppeteer.screenshot('klbq-wiki', {
+          tplFile: CALENDAR_TEMPLATE,
+          saveId: 'calendar_' + Date.now(),
+          imgType: 'jpeg',
+          quality: 88,
+          title: '卡拉彼丘日历',
+          kind: `共 ${eventsView.length} 个倒计时 · ${birthdaysView.length} 个近期生日`,
+          updated: nowStr,
+          events: eventsView,
+          birthdays: birthdaysView,
+          card_width: cardWidth,
+          pageGotoParams: {
+            timeout: timeout * 1000,
+            waitUntil: 'networkidle2',
+          },
+        })
+        if (img) {
+          await e.reply(img)
+          return true
+        }
+      } catch (err) {
+        logger.warn(`[KlbqWiki] 日历卡片渲染失败: ${err}`)
+        if (!fallback) {
+          await e.reply('日历卡片渲染失败，请稍后重试。')
+          return true
+        }
+      }
+    }
+
+    // 文字回退
+    const lines = [`更新时间：${nowStr}`]
+    if (eventsView.length) {
+      lines.push('', '【倒计时】')
+      for (const ev of eventsView) {
+        lines.push(`[${ev.typeLabel}] ${ev.title}`)
+        lines.push(`  ${ev.status}（止 ${ev.end}）`)
+      }
+    }
+    if (birthdaysView.length) {
+      lines.push('', '【近期生日】')
+      for (const b of birthdaysView) {
+        lines.push(`${b.date}　${b.name}（${b.countdown}）`)
+      }
+    }
+    return await this.sendTextCard(e, '卡拉彼丘日历', lines.join('\n'), '日历查询')
   }
 
   /** 皮肤查询 */

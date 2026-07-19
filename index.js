@@ -779,12 +779,22 @@ export class KlbqWikiPlugin extends plugin {
     }
 
     const typeLabels = { 赛季: '赛季', 活动: '活动', 奖池: '奖池' }
+    // 活动数大于 4 时每行两个（紧凑布局），否则每行一个
+    const useGrid = ongoing.length > 4
     const activitiesView = ongoing.map((ev) => {
       const typeLabel = typeLabels[ev.type] || ev.type
       const typeClass = ev.type === '赛季' ? 'season' : ev.type === '活动' ? 'activity' : ev.type === '奖池' ? 'pool' : 'other'
       const urgent = ev.daysRemaining <= 3
-      return { ...ev, typeLabel, typeClass, urgent }
+      return {
+        ...ev,
+        typeLabel,
+        typeClass,
+        urgent,
+        compact: useGrid,
+        single: !useGrid,
+      }
     })
+    const gridColumns = useGrid ? '1fr 1fr' : '1fr'
 
     const now = new Date()
     const pad = (n) => String(n).padStart(2, '0')
@@ -803,6 +813,7 @@ export class KlbqWikiPlugin extends plugin {
           kind: `共 ${activitiesView.length} 个活动正在进行中`,
           updated: nowStr,
           activities: activitiesView,
+          grid_columns: gridColumns,
           card_width: cardWidth,
           pageGotoParams: {
             timeout: timeout * 1000,

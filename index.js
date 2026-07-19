@@ -233,7 +233,8 @@ function helpData() {
       name: '其他',
       items: [
         { name: '-生日', desc: '查看近期角色生日' },
-        { name: '-日历', desc: '查看活动倒计时与角色生日日历' },
+        { name: '-日历', desc: '查看活动倒计时与当月角色生日' },
+        { name: '-活动', desc: '查看当前活动图片与详情' },
         { name: '-赛季', desc: '查看赛季结束时间' },
         { name: '-喵言喵语 / -喵', desc: '随机喵言喵语' },
       ],
@@ -338,6 +339,10 @@ export class KlbqWikiPlugin extends plugin {
       // 日历（倒计时 + 生日）
       if (query === '日历' || query === '活动日历' || query === '倒计时') {
         return await this.handleCalendar(e)
+      }
+      // 活动（显示当前活动图片）
+      if (query === '活动' || query === '当前活动') {
+        return await this.handleActivities(e)
       }
       // 皮肤：角色名 皮肤名
       const parts = query.split(/\s+/)
@@ -661,27 +666,38 @@ export class KlbqWikiPlugin extends plugin {
       return { ...ev, typeLabel, typeClass, urgent }
     })
 
-    // 处理生日数据：计算倒计时，取最近 8 个
+    // 处理生日数据：只显示当月过生日的角色，按日期升序
     const now = new Date()
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const currentMonth = now.getMonth() + 1
     const birthdayList = birthdayRows
+      .filter((row) => row.month === currentMonth)
       .map((row) => {
         let target = new Date(today.getFullYear(), row.month - 1, row.day)
-        if (target < today) target = new Date(today.getFullYear() + 1, row.month - 1, row.day)
+        // 当月已过完生日的，依然显示但标记为已过
         const days = Math.floor((target - today) / 86400000)
         return { name: row.name, month: row.month, day: row.day, days }
       })
-      .sort((a, b) => a.days - b.days || a.month - b.month || a.day - b.day)
-      .slice(0, 8)
+      .sort((a, b) => a.day - b.day)
 
-    const when = (days) => (days === 0 ? '今天' : days === 1 ? '明天' : `${days} 天后`)
+    const when = (days) => {
+      if (days === 0) return '今天'
+      if (days === 1) return '明天'
+      if (days < 0) return `已过 ${Math.abs(days)} 天`
+      return `${days} 天后`
+    }
     const dateStr = (m, d) => `${m}月${d}日`
     const birthdaysView = birthdayList.map((b) => ({
       name: b.name,
       date: dateStr(b.month, b.day),
       countdown: when(b.days),
       isToday: b.days === 0,
+      isPast: b.days < 0,
     }))
+
+    const birthdaySectionTitle = birthdaysView.length
+      ? `${currentMonth}月角色生日（共 ${birthdaysView.length} 位）`
+      : `${currentMonth}月无角色生日`
 
     const nowStr = (() => {
       const pad = (n) => String(n).padStart(2, '0')
@@ -698,10 +714,11 @@ export class KlbqWikiPlugin extends plugin {
           imgType: 'jpeg',
           quality: 88,
           title: '卡拉彼丘日历',
-          kind: `共 ${eventsView.length} 个倒计时 · ${birthdaysView.length} 个近期生日`,
+          kind: `共 ${eventsView.length} 个倒计时 · ${birthdaysView.length} 个本月生日（${currentMonth}月）`,
           updated: nowStr,
           events: eventsView,
           birthdays: birthdaysView,
+          birthdaySectionTitle,
           card_width: cardWidth,
           pageGotoParams: {
             timeout: timeout * 1000,
@@ -731,12 +748,60 @@ export class KlbqWikiPlugin extends plugin {
       }
     }
     if (birthdaysView.length) {
-      lines.push('', '【近期生日】')
+      lines.push('', `【${currentMonth}月生日】`)
       for (const b of birthdaysView) {
         lines.push(`${b.date}　${b.name}（${b.countdown}）`)
       }
+    } else {
+      lines.push('', `【${currentMonth}月生日】本月无角色生日`)
     }
     return await this.sendTextCard(e, '卡拉彼丘日历', lines.join('\n'), '日历查询')
+  }
+
+  /** 活动查询：显示当前进行中的活动图片 */
+  async handleActivities(e) {
+    const events = await this.wiki.calendarEvents().catch((err) => {
+      logger.warn(`[KlbqWiki] 获取活动数据失败: ${err}`)
+      return []
+    })
+
+    if (!events.length) {
+      await e.reply('暂无活动数据，请稍后重试。')
+      return true
+    }
+
+    // 只显示正在进行中（未结束、已开始）的活动
+    const ongoing = events.filter((ev) => !ev.ended && !ev.notStarted && ev.image)
+    if (!ongoing.length) {
+      await e.reply('当前没有正在进行的活动。')
+      return true
+    }
+
+    // 文字摘要
+    const lines = ['【当前活动】', '']
+    for (const ev of ongoing) {
+      lines.push(`[${ev.type}] ${ev.title}`)
+      lines.push(`  ${ev.status}（止 ${ev.end}）`)
+      if (ev.url) lines.push(`  详情：${ev.url}`)
+      lines.push('')
+    }
+    lines.push(`共 ${ongoing.length} 个活动正在进行中。`)
+    await e.reply(lines.join('\n'))
+
+    // 逐个发送活动图片（通过图片缓存，本地优先）
+    const typeLabel = (t) => (t === '赛季' ? '赛季' : t === '活动' ? '活动' : t === '奖池' ? '奖池' : t)
+    for (const ev of ongoing) {
+      try {
+        const localPath = await this.imageCache.get(ev.image)
+        const caption = `[${typeLabel(ev.type)}] ${ev.title}\n${ev.status}（止 ${ev.end}）`
+        // segment.image 同时支持本地路径和远程 URL
+        await e.reply([segment.image(localPath), `\n${caption}`])
+      } catch (err) {
+        logger.warn(`[KlbqWiki] 发送活动图片失败: ${ev.title} - ${err}`)
+        await e.reply(`[${typeLabel(ev.type)}] ${ev.title}\n${ev.status}（止 ${ev.end}）\n图片加载失败：${err}`)
+      }
+    }
+    return true
   }
 
   /** 皮肤查询 */

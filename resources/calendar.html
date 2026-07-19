@@ -40,10 +40,12 @@ body { display: block; }
 .birthday-list { position: relative; display: flex; flex-direction: column; gap: 8px; }
 .birthday-row { display: flex; align-items: center; padding: 12px 16px; border-radius: 12px; background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .08); }
 .birthday-row.today { background: rgba(255, 230, 125, .18); border-color: rgba(255, 230, 125, .5); }
+.birthday-row.past { opacity: .5; }
 .birthday-name { flex: 1; color: #ffffff; font-size: 20px; font-weight: 600; word-break: break-all; }
 .birthday-date { color: #c6d5ff; font-size: 18px; flex-shrink: 0; margin: 0 14px; }
 .birthday-countdown { color: #fff2a8; font-size: 18px; font-weight: 700; flex-shrink: 0; min-width: 80px; text-align: right; }
 .birthday-countdown.today { color: #ffe89a; }
+.birthday-countdown.past { color: #888; font-weight: 600; }
 .footer { position: relative; margin-top: 22px; color: rgba(237, 247, 255, .62); font-size: 16px; text-align: right; }
 </style>
 </head>
@@ -84,13 +86,13 @@ body { display: block; }
   {{/if}}
 
   {{if birthdays.length}}
-  <div class="section-title">近期角色生日</div>
+  <div class="section-title">{{birthdaySectionTitle}}</div>
   <div class="birthday-list">
     {{each birthdays}}
-    <div class="birthday-row{{$value.isToday ? ' today' : ''}}">
+    <div class="birthday-row{{$value.isToday ? ' today' : ''}}{{$value.isPast ? ' past' : ''}}">
       <div class="birthday-name">{{$value.name}}</div>
       <div class="birthday-date">{{$value.date}}</div>
-      <div class="birthday-countdown{{$value.isToday ? ' today' : ''}}">{{$value.countdown}}</div>
+      <div class="birthday-countdown{{$value.isToday ? ' today' : ''}}{{$value.isPast ? ' past' : ''}}">{{$value.countdown}}</div>
     </div>
     {{/each}}
   </div>

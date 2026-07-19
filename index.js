@@ -556,7 +556,9 @@ export class KlbqWikiPlugin extends plugin {
   /** 生日查询 */
   async handleBirthday(e) {
     const rows = await this.wiki.birthdays()
-    if (!rows.length) throw new Error('Wiki 暂无可解析的角色生日数据')
+    if (!rows.length) {
+      return await this.sendTextCard(e, '暂无数据', 'Wiki 暂无可解析的角色生日数据，请稍后重试。', '查询提示')
+    }
 
     const now = new Date()
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
@@ -643,7 +645,9 @@ export class KlbqWikiPlugin extends plugin {
   /** 喵言喵语 */
   async handleCatLanguage(e) {
     const lines = await this.wiki.catLanguageLines()
-    if (!lines.length) throw new Error('"喵言喵语"页面没有可解析内容')
+    if (!lines.length) {
+      return await this.sendTextCard(e, '暂无数据', '"喵言喵语"页面没有可解析内容，请稍后重试。', '查询提示')
+    }
     const text = lines[Math.floor(Math.random() * lines.length)]
     if (!this.config.cat_language_image) {
       await e.reply(text)
@@ -876,10 +880,14 @@ export class KlbqWikiPlugin extends plugin {
 
     const roleName = page.title || role
     const html = await this.wiki.queryPageHtml(roleName)
-    if (!html) throw new Error(`无法获取"${roleName}"角色页面`)
+    if (!html) {
+      return await this.sendTextCard(e, '网络错误', `获取"${roleName}"角色页面失败，可能是网络波动，请稍后重试。`, '查询提示')
+    }
 
     const skins = this.wiki.parseSkins(html)
-    if (!skins.length) throw new Error(`"${roleName}"页面没有可解析的皮肤资料`)
+    if (!skins.length) {
+      return await this.sendTextCard(e, '无皮肤数据', `"${roleName}"页面没有可解析的皮肤资料。`, '查询提示')
+    }
 
     // 别名映射
     if (skinQuery === '宿舍皮' || skinQuery === '私皮') skinQuery = '私服'

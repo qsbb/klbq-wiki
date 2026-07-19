@@ -1,5 +1,32 @@
 # 更新日志
 
+## 1.9.1
+
+### Bug 修复
+
+- **修复网络波动导致查询失败的问题**
+  - `apiGet` 新增重试机制：失败后自动重试 2 次，间隔递增（1s、2s）
+  - 5xx 服务器错误可重试，4xx 客户端错误不重试
+  - 网络错误（fetch failed、超时）自动重试
+  - 重试失败后记录最终错误日志
+
+- **改进错误提示，不再返回"查询失败"技术错误**
+  - `handleSkin` 获取角色页面失败时返回"网络错误，可能是网络波动，请稍后重试"
+  - `handleSkin` 无皮肤数据时返回"无皮肤数据"提示
+  - `handleBirthday` 无数据时返回"暂无数据，请稍后重试"
+  - `handleCatLanguage` 无数据时返回"暂无数据，请稍后重试"
+  - 这些场景之前会 throw 导致 `handleQuery` 返回"查询失败，已写入后台日志"的不友好提示
+
+### 问题背景
+
+用户反馈 `-玛德蕾娜失落的伊卡洛斯` 查询失败，日志显示：
+```
+[KlbqWiki] API 请求失败: TypeError: fetch failed
+[KlbqWiki] 查询异常: query=玛德蕾娜失落的伊卡洛斯, error=Error: 无法获取"玛德蕾娜·利里"角色页面
+```
+
+原因是 Wiki API 请求出现瞬时网络故障（fetch failed），`queryPageHtml` 返回 null，`handleSkin` 直接 throw 导致查询失败。现在增加了重试机制和友好的错误提示。
+
 ## 1.9.0
 
 ### 架构重构（参考 miao-plugin 设计）

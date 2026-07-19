@@ -354,17 +354,36 @@ export class KlbqWikiPlugin extends plugin {
         return await this.handleSkin(e, parts[0], parts[1])
       }
 
-      // 皮肤：角色名+皮肤后缀（无空格，如"心夏私服"）
-      // 仅当角色名在别名表中已知时才分派，避免误吞普通条目查询
+      // 皮肤：角色名+皮肤名（无空格，如"心夏私服"、"糖猫猎虎裁恶"、"心夏机动天使"）
+      // 遍历别名表，若查询以某个角色别名开头且剩余部分非空，则分派到皮肤查询
+      // 要求角色部分和皮肤部分都至少 2 个字符，避免误匹配
       if (parts.length === 1) {
         const skinSuffixes = ['私服', '宿舍皮', '私皮', '皮肤']
+        let skinDispatched = false
+        // 优先匹配固定皮肤后缀
         for (const suffix of skinSuffixes) {
           if (query.endsWith(suffix) && query.length > suffix.length) {
             const rolePart = query.slice(0, -suffix.length)
-            // 角色名必须在别名表中已知，或能查到 Wiki 条目
             const roleResolved = this.aliasMap.get(rolePart.toLowerCase())
             if (roleResolved) {
+              skinDispatched = true
               return await this.handleSkin(e, rolePart, suffix)
+            }
+          }
+        }
+        // 再遍历别名表做前缀匹配（处理具体皮肤名，如"猎虎裁恶"、"机动天使"）
+        if (!skinDispatched) {
+          // 按别名长度降序，优先匹配长别名（如"哈基米雪儿"优先于"哈基米"）
+          const aliasKeys = [...this.aliasMap.keys()].sort((a, b) => b.length - a.length)
+          for (const aliasKey of aliasKeys) {
+            if (query.toLowerCase().startsWith(aliasKey)) {
+              const rolePart = query.slice(0, aliasKey.length)
+              const skinPart = query.slice(aliasKey.length)
+              // 角色部分和皮肤部分都至少 2 个字符
+              if (rolePart.length >= 2 && skinPart.length >= 2) {
+                skinDispatched = true
+                return await this.handleSkin(e, rolePart, skinPart)
+              }
             }
           }
         }

@@ -354,6 +354,22 @@ export class KlbqWikiPlugin extends plugin {
         return await this.handleSkin(e, parts[0], parts[1])
       }
 
+      // 皮肤：角色名+皮肤后缀（无空格，如"心夏私服"）
+      // 仅当角色名在别名表中已知时才分派，避免误吞普通条目查询
+      if (parts.length === 1) {
+        const skinSuffixes = ['私服', '宿舍皮', '私皮', '皮肤']
+        for (const suffix of skinSuffixes) {
+          if (query.endsWith(suffix) && query.length > suffix.length) {
+            const rolePart = query.slice(0, -suffix.length)
+            // 角色名必须在别名表中已知，或能查到 Wiki 条目
+            const roleResolved = this.aliasMap.get(rolePart.toLowerCase())
+            if (roleResolved) {
+              return await this.handleSkin(e, rolePart, suffix)
+            }
+          }
+        }
+      }
+
       // 角色或武器查询
       return await this.handleLookup(e, query)
     } catch (err) {
@@ -507,12 +523,7 @@ export class KlbqWikiPlugin extends plugin {
   async handleLookup(e, query) {
     const page = await this.wiki.lookup(query, this.aliasMap)
     if (!page) {
-      const searchUrl =
-        'https://wiki.biligame.com/klbq/Special:%E6%90%9C%E7%B4%A2?' +
-        new URLSearchParams({ search: query }).toString()
-      await this.sendTextCard(e, '未找到条目', `未找到"${query}"的卡拉彼丘 Wiki 条目。`, '查询提示')
-      await e.reply(searchUrl)
-      return true
+      return await this.sendTextCard(e, '未找到条目', `未找到"${query}"的卡拉彼丘 Wiki 条目。\n请检查名称是否正确，或使用 -帮助 查看支持的查询。`, '查询提示')
     }
 
     const title = page.title || this.aliasMap.get(query.toLowerCase()) || query

@@ -40,8 +40,8 @@ const HELP_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/help.html`
 const BIRTHDAY_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/birthday.html`
 const CALENDAR_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/calendar.html`
 const ACTIVITIES_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/activities.html`
-const REDEEM_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/redeem.html`
 const MAP_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/map.html`
+const MAP_LIST_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/maps.html`
 const SKILLS_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/skills.html`
 
 /** 默认配置 */
@@ -237,6 +237,7 @@ function helpData() {
     {
       name: '其他',
       items: [
+        { name: '-地图', desc: '按模式查看地图名称与图片块' },
         { name: '-88区', desc: '查询地图资料、地形图与地图概览' },
         { name: '-生日', desc: '查看近期角色生日' },
         { name: '-日历', desc: '查看活动倒计时与当月角色生日' },
@@ -331,6 +332,8 @@ export class KlbqWikiPlugin extends plugin {
     { reg: /^(活动|当前活动)$/, fn: (self, e) => self.handleActivities(e) },
     // 兑换码
     { reg: /^(兑换码|礼包码|cdk)$/i, fn: (self, e) => self.handleRedeemCodes(e) },
+    // 地图一览：按模式分组显示各模式的地图
+    { reg: /^(地图|地图一览|全部地图|地图列表)$/, fn: (self, e) => self.handleMapList(e) },
     // 角色技能：支持角色别名，如 -心夏技能、-奶妈技能
     { reg: /^(.+?)技能$/, fn: (self, e, m) => self.handleRoleSkills(e, m[1]) },
     // 皮肤：角色名 皮肤名（空格分隔）
@@ -568,6 +571,52 @@ export class KlbqWikiPlugin extends plugin {
     const thumb = await this.wiki.enhanceThumb(title, html || '', fields, fallbackThumb)
 
     return await this.sendResult(e, title, pageUrl, fields, thumb)
+  }
+
+  /** 地图一览：按模式显示地图名称与图片块 */
+  async handleMapList(e) {
+    const groups = await this.wiki.mapModes().catch((err) => {
+      logger.warn(`[KlbqWiki] 获取地图一览失败: ${err}`)
+      return null
+    })
+    if (groups === null) {
+      return await this.sendTextCard(e, '网络错误', '获取地图页面失败，可能是网络波动，请稍后重试。', '查询提示')
+    }
+    if (!groups.length) {
+      return await this.sendTextCard(e, '暂无地图', 'Wiki 地图页面暂无可解析的模式和地图。', '地图一览')
+    }
+
+    if (this.config.render_image && puppeteer) {
+      const { cardWidth, timeout, fallback } = renderSettings(this.config)
+      try {
+        const img = await puppeteer.screenshot('klbq-wiki', {
+          tplFile: MAP_LIST_TEMPLATE,
+          saveId: 'maps_' + Date.now(),
+          imgType: 'jpeg',
+          quality: 88,
+          groups: groups.map((group) => ({
+            ...group,
+            maps: group.maps.map((map) => ({ ...map, image: toFileUrl(map.image) })),
+          })),
+          columns: 2,
+          card_width: cardWidth,
+          pageGotoParams: { timeout: timeout * 1000, waitUntil: 'networkidle2' },
+        })
+        if (img) {
+          await e.reply(img)
+          return true
+        }
+      } catch (err) {
+        logger.warn(`[KlbqWiki] 地图一览渲染失败: ${err}`)
+        if (!fallback) return await e.reply('地图一览渲染失败，请稍后重试。')
+      }
+    }
+
+    const lines = ['地图一览：']
+    for (const group of groups) {
+      lines.push(`\n【${group.mode}】\n${group.maps.map((map) => map.name).join('、')}`)
+    }
+    return await e.reply(lines.join(''))
   }
 
   /** 地图详情卡片 */
@@ -968,7 +1017,7 @@ export class KlbqWikiPlugin extends plugin {
     return await this.sendTextCard(e, '当前活动', lines.join('\n'), '活动查询')
   }
 
-  /** 兑换码查询：显示 Wiki 收录且未明确失效的兑换码 */
+  /** 兑换码查询：合并转发发送，每个兑换码单独一条消息便于复制 */
   async handleRedeemCodes(e) {
     const codes = await this.wiki.redeemCodes().catch((err) => {
       logger.warn(`[KlbqWiki] 获取兑换码失败: ${err}`)
@@ -985,32 +1034,32 @@ export class KlbqWikiPlugin extends plugin {
     const pad = (n) => String(n).padStart(2, '0')
     const nowStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
 
-    if (this.config.render_image && puppeteer) {
-      const { cardWidth, timeout, fallback } = renderSettings(this.config)
-      try {
-        const img = await puppeteer.screenshot('klbq-wiki', {
-          tplFile: REDEEM_TEMPLATE,
-          saveId: 'redeem_' + Date.now(),
-          imgType: 'jpeg',
-          quality: 90,
-          title: '卡拉彼丘兑换码',
-          kind: `共 ${codes.length} 个未明确失效的兑换码`,
-          updated: nowStr,
-          codes,
-          card_width: cardWidth,
-          pageGotoParams: { timeout: timeout * 1000, waitUntil: 'networkidle2' },
-        })
-        if (img) {
-          await e.reply(img)
-          return true
-        }
-      } catch (err) {
-        logger.warn(`[KlbqWiki] 兑换码卡片渲染失败: ${err}`)
-        if (!fallback) {
-          await e.reply('兑换码卡片渲染失败，请稍后重试。')
-          return true
-        }
-      }
+    const nickname = '卡拉彼丘 Wiki'
+    const forwardMsg = [
+      {
+        user_id: e.user_id || 10000,
+        nickname,
+        message: [
+          `卡拉彼丘兑换码 · 共 ${codes.length} 个\n更新时间：${nowStr}\n每个兑换码单独一条消息，长按即可复制。\n标注"未知"的兑换码可能随时失效，请尽快使用。`,
+        ],
+      },
+    ]
+    for (const item of codes) {
+      // 兑换码单独一条，复制时不会带上奖励说明
+      forwardMsg.push({ user_id: e.user_id || 10000, nickname, message: [item.code] })
+      forwardMsg.push({
+        user_id: e.user_id || 10000,
+        nickname,
+        message: [`奖励：${item.reward}\n有效期：${item.expires}${item.section ? `（${item.section}）` : ''}`],
+      })
+    }
+
+    try {
+      const msg = await this._makeForwardMsg(e, forwardMsg)
+      await e.reply(msg)
+      return true
+    } catch (err) {
+      logger.warn(`[KlbqWiki] 兑换码合并转发失败，改为文字发送: ${err}`)
     }
 
     const lines = [`更新时间：${nowStr}`, '']

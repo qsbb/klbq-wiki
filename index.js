@@ -3,9 +3,9 @@
  * 移植自 astrbot_plugin_klbq_wiki
  *
  * 功能：
- * - 查询角色资料、武器资料、角色武器
+ * - 查询角色资料、角色技能、武器资料、角色武器与地图资料
  * - 查询角色皮肤列表与皮肤详情
- * - 查询近期角色生日、当前赛季、随机喵言喵语
+ * - 查询近期角色生日、当前活动、兑换码、当前赛季、随机喵言喵语
  * - 支持图片卡片渲染（puppeteer），失败回退文字
  * - 支持合并转发消息发送皮肤图片
  *
@@ -40,6 +40,9 @@ const HELP_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/help.html`
 const BIRTHDAY_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/birthday.html`
 const CALENDAR_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/calendar.html`
 const ACTIVITIES_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/activities.html`
+const REDEEM_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/redeem.html`
+const MAP_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/map.html`
+const SKILLS_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/skills.html`
 
 /** 默认配置 */
 const DEFAULT_CONFIG = {
@@ -219,6 +222,7 @@ function helpData() {
         { name: '-心夏 / #klbq 心夏', desc: '查询角色资料' },
         { name: '-空境 / #klbq 空境', desc: '查询武器资料' },
         { name: '-心夏武器', desc: '查询角色武器' },
+        { name: '-心夏技能', desc: '查询角色技能，支持角色别名' },
       ],
     },
     {
@@ -233,9 +237,11 @@ function helpData() {
     {
       name: '其他',
       items: [
+        { name: '-88区', desc: '查询地图资料、地形图与地图概览' },
         { name: '-生日', desc: '查看近期角色生日' },
         { name: '-日历', desc: '查看活动倒计时与当月角色生日' },
         { name: '-活动', desc: '查看当前活动图片与详情' },
+        { name: '-兑换码', desc: '查看 Wiki 收录的可用兑换码' },
         { name: '-赛季', desc: '查看赛季结束时间' },
         { name: '-喵言喵语 / -喵', desc: '随机喵言喵语' },
       ],
@@ -266,7 +272,7 @@ export class KlbqWikiPlugin extends plugin {
   constructor() {
     super({
       name: '卡拉彼丘Wiki查询',
-      dsc: '查询卡拉彼丘角色、武器、皮肤、生日、赛季与喵言喵语等 Biligame Wiki 信息',
+      dsc: '查询卡拉彼丘角色、技能、武器、皮肤、地图、活动、兑换码、生日与赛季等 Biligame Wiki 信息',
       event: 'message',
       priority: 5000,
       rule: [
@@ -323,6 +329,10 @@ export class KlbqWikiPlugin extends plugin {
     { reg: /^(日历|活动日历|倒计时)$/, fn: (self, e) => self.handleCalendar(e) },
     // 活动
     { reg: /^(活动|当前活动)$/, fn: (self, e) => self.handleActivities(e) },
+    // 兑换码
+    { reg: /^(兑换码|礼包码|cdk)$/i, fn: (self, e) => self.handleRedeemCodes(e) },
+    // 角色技能：支持角色别名，如 -心夏技能、-奶妈技能
+    { reg: /^(.+?)技能$/, fn: (self, e, m) => self.handleRoleSkills(e, m[1]) },
     // 皮肤：角色名 皮肤名（空格分隔）
     { reg: /^(.+?)\s+(.+)$/, fn: async (self, e, m) => {
       const role = m[1], skin = m[2]
@@ -538,6 +548,13 @@ export class KlbqWikiPlugin extends plugin {
     const title = page.title || this.aliasMap.get(query.toLowerCase()) || query
     const pageUrl = this.wiki.pageUrl(title)
     const html = await this.wiki.queryPageHtml(title)
+
+    // 地图条目使用专属卡片展示，普通角色/武器继续走通用资料卡
+    if (html) {
+      const map = await this.wiki.mapInfo(title, html, cleanText(page.extract || ''))
+      if (map) return await this.sendMapResult(e, map)
+    }
+
     const fields = html ? this.wiki.extractInfo(html, title) : { 名称: title }
 
     if (!fields['简介']) {
@@ -551,6 +568,91 @@ export class KlbqWikiPlugin extends plugin {
     const thumb = await this.wiki.enhanceThumb(title, html || '', fields, fallbackThumb)
 
     return await this.sendResult(e, title, pageUrl, fields, thumb)
+  }
+
+  /** 地图详情卡片 */
+  async sendMapResult(e, map) {
+    const images = [...map.terrain, ...map.gallery]
+    if (this.config.render_image && puppeteer) {
+      const { cardWidth, timeout, fallback } = renderSettings(this.config)
+      try {
+        const img = await puppeteer.screenshot('klbq-wiki', {
+          tplFile: MAP_TEMPLATE,
+          saveId: 'map_' + Date.now(),
+          imgType: 'jpeg',
+          quality: 88,
+          title: map.title,
+          kind: `地图资料 · ${map.modes.length} 个支持模式`,
+          description: map.description,
+          modes: map.modes,
+          platforms: map.platforms,
+          terrain: map.terrain.map(toFileUrl),
+          gallery: map.gallery.map(toFileUrl),
+          card_width: cardWidth,
+          pageGotoParams: { timeout: timeout * 1000, waitUntil: 'networkidle2' },
+        })
+        if (img) {
+          await e.reply(img)
+          return true
+        }
+      } catch (err) {
+        logger.warn(`[KlbqWiki] 地图卡片渲染失败: ${err}`)
+        if (!fallback) return await e.reply('地图卡片渲染失败，请稍后重试。')
+      }
+    }
+
+    const lines = [`【${map.title}】`]
+    if (map.description) lines.push(map.description)
+    if (map.modes.length) lines.push(`支持模式：${map.modes.join('、')}`)
+    if (map.platforms.length) lines.push(`上线平台：${map.platforms.join('、')}`)
+    await e.reply(lines.join('\n'))
+    for (const image of images.slice(0, 4)) await e.reply(segment.image(image))
+    return true
+  }
+
+  /** 角色技能查询 */
+  async handleRoleSkills(e, roleQuery) {
+    const role = this.aliasMap.get(roleQuery.toLowerCase()) || roleQuery
+    let page = await this.wiki.queryPage(role)
+    if (!page) {
+      const found = await this.wiki.searchTitle(role)
+      page = found ? await this.wiki.queryPage(found) : null
+    }
+    if (!page) return await this.sendTextCard(e, '未找到角色', `未找到角色"${roleQuery}"。`, '查询提示')
+
+    const title = page.title || role
+    const html = await this.wiki.queryPageHtml(title)
+    if (!html) return await this.sendTextCard(e, '网络错误', `获取"${title}"角色页面失败，请稍后重试。`, '查询提示')
+    const skills = await this.wiki.roleSkills(title, html)
+    if (!skills.length) return await this.sendTextCard(e, '暂无技能', `"${title}"页面没有可解析的角色技能。`, '查询提示')
+
+    if (this.config.render_image && puppeteer) {
+      const { cardWidth, timeout, fallback } = renderSettings(this.config)
+      try {
+        const img = await puppeteer.screenshot('klbq-wiki', {
+          tplFile: SKILLS_TEMPLATE,
+          saveId: 'skills_' + Date.now(),
+          imgType: 'jpeg',
+          quality: 88,
+          title: `${title}技能`,
+          kind: `共 ${skills.length} 个角色技能`,
+          skills: skills.map((item) => ({ ...item, icon: toFileUrl(item.icon) })),
+          card_width: cardWidth,
+          pageGotoParams: { timeout: timeout * 1000, waitUntil: 'networkidle2' },
+        })
+        if (img) {
+          await e.reply(img)
+          return true
+        }
+      } catch (err) {
+        logger.warn(`[KlbqWiki] 技能卡片渲染失败: ${err}`)
+        if (!fallback) return await e.reply('技能卡片渲染失败，请稍后重试。')
+      }
+    }
+
+    const lines = [`【${title}技能】`]
+    for (const skill of skills) lines.push(`\n[${skill.type}] ${skill.name}\n${skill.description}`)
+    return await e.reply(lines.join('\n'))
   }
 
   /** 生日查询 */
@@ -864,6 +966,61 @@ export class KlbqWikiPlugin extends plugin {
       lines.push(`  ${ev.status}（止 ${ev.end}）`)
     }
     return await this.sendTextCard(e, '当前活动', lines.join('\n'), '活动查询')
+  }
+
+  /** 兑换码查询：显示 Wiki 收录且未明确失效的兑换码 */
+  async handleRedeemCodes(e) {
+    const codes = await this.wiki.redeemCodes().catch((err) => {
+      logger.warn(`[KlbqWiki] 获取兑换码失败: ${err}`)
+      return null
+    })
+    if (codes === null) {
+      return await this.sendTextCard(e, '网络错误', '获取兑换码页面失败，可能是网络波动，请稍后重试。', '查询提示')
+    }
+    if (!codes.length) {
+      return await this.sendTextCard(e, '暂无兑换码', 'Wiki 暂无未失效的兑换码。', '兑换码')
+    }
+
+    const now = new Date()
+    const pad = (n) => String(n).padStart(2, '0')
+    const nowStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+
+    if (this.config.render_image && puppeteer) {
+      const { cardWidth, timeout, fallback } = renderSettings(this.config)
+      try {
+        const img = await puppeteer.screenshot('klbq-wiki', {
+          tplFile: REDEEM_TEMPLATE,
+          saveId: 'redeem_' + Date.now(),
+          imgType: 'jpeg',
+          quality: 90,
+          title: '卡拉彼丘兑换码',
+          kind: `共 ${codes.length} 个未明确失效的兑换码`,
+          updated: nowStr,
+          codes,
+          card_width: cardWidth,
+          pageGotoParams: { timeout: timeout * 1000, waitUntil: 'networkidle2' },
+        })
+        if (img) {
+          await e.reply(img)
+          return true
+        }
+      } catch (err) {
+        logger.warn(`[KlbqWiki] 兑换码卡片渲染失败: ${err}`)
+        if (!fallback) {
+          await e.reply('兑换码卡片渲染失败，请稍后重试。')
+          return true
+        }
+      }
+    }
+
+    const lines = [`更新时间：${nowStr}`, '']
+    for (const item of codes) {
+      lines.push(`${item.code}`)
+      lines.push(`奖励：${item.reward}`)
+      lines.push(`有效期：${item.expires}${item.section ? `（${item.section}）` : ''}`, '')
+    }
+    lines.push('提示：标注“未知”的兑换码可能随时失效，请尽快使用。')
+    return await this.sendTextCard(e, '卡拉彼丘兑换码', lines.join('\n').trim(), '兑换码')
   }
 
   /** 皮肤查询 */

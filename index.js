@@ -43,6 +43,7 @@ const ACTIVITIES_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/activities.html`
 const MAP_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/map.html`
 const MAP_LIST_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/maps.html`
 const SKILLS_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/skills.html`
+const AWAKEN_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/awaken.html`
 
 /** 默认配置 */
 const DEFAULT_CONFIG = {
@@ -223,6 +224,7 @@ function helpData() {
         { name: '-空境 / #klbq 空境', desc: '查询武器资料' },
         { name: '-心夏武器', desc: '查询角色武器' },
         { name: '-心夏技能', desc: '查询角色技能，支持角色别名' },
+        { name: '-心夏觉醒', desc: '查询角色觉醒效果与激活消耗' },
       ],
     },
     {
@@ -336,11 +338,16 @@ export class KlbqWikiPlugin extends plugin {
     { reg: /^(地图|地图一览|全部地图|地图列表)$/, fn: (self, e) => self.handleMapList(e) },
     // 角色技能：支持角色别名，如 -心夏技能、-奶妈技能
     { reg: /^(.+?)技能$/, fn: (self, e, m) => self.handleRoleSkills(e, m[1]) },
+    // 角色觉醒：支持角色别名，如 -心夏觉醒、-奶妈觉醒（捕获组 trim 兼容"心夏 觉醒"写法）
+    { reg: /^(.+?)觉醒$/, fn: (self, e, m) => self.handleRoleAwakenings(e, m[1].trim()) },
     // 皮肤：角色名 皮肤名（空格分隔）
     { reg: /^(.+?)\s+(.+)$/, fn: async (self, e, m) => {
       const role = m[1], skin = m[2]
       if (skin === '武器' || skin === '的武器') {
         return await self.handleLookup(e, `${role}武器`)
+      }
+      if (skin === '觉醒') {
+        return await self.handleRoleAwakenings(e, role)
       }
       return await self.handleSkin(e, role, skin)
     }},
@@ -701,6 +708,62 @@ export class KlbqWikiPlugin extends plugin {
 
     const lines = [`【${title}技能】`]
     for (const skill of skills) lines.push(`\n[${skill.type}] ${skill.name}\n${skill.description}`)
+    return await e.reply(lines.join('\n'))
+  }
+
+  /** 角色觉醒查询 */
+  async handleRoleAwakenings(e, roleQuery) {
+    const role = this.aliasMap.get(roleQuery.toLowerCase()) || roleQuery
+    let page = await this.wiki.queryPage(role)
+    if (!page) {
+      const found = await this.wiki.searchTitle(role)
+      page = found ? await this.wiki.queryPage(found) : null
+    }
+    if (!page) return await this.sendTextCard(e, '未找到角色', `未找到角色"${roleQuery}"。`, '查询提示')
+
+    const title = page.title || role
+    const html = await this.wiki.queryPageHtml(title)
+    if (!html) return await this.sendTextCard(e, '网络错误', `获取"${title}"角色页面失败，请稍后重试。`, '查询提示')
+    const groups = await this.wiki.roleAwakenings(title, html)
+    if (!groups.length) return await this.sendTextCard(e, '暂无觉醒', `"${title}"页面没有可解析的觉醒效果。`, '查询提示')
+
+    const total = groups.reduce((n, g) => n + g.awakenings.length, 0)
+    const kind = groups.length > 1
+      ? `按模式分组 · 共 ${total} 条觉醒效果`
+      : `共 ${total} 条觉醒效果`
+
+    if (this.config.render_image && puppeteer) {
+      const { cardWidth, timeout, fallback } = renderSettings(this.config)
+      try {
+        const img = await puppeteer.screenshot('klbq-wiki', {
+          tplFile: AWAKEN_TEMPLATE,
+          saveId: 'awaken_' + Date.now(),
+          imgType: 'jpeg',
+          quality: 88,
+          title: `${title}觉醒`,
+          kind,
+          groups,
+          card_width: cardWidth,
+          pageGotoParams: { timeout: timeout * 1000, waitUntil: 'networkidle2' },
+        })
+        if (img) {
+          await e.reply(img)
+          return true
+        }
+      } catch (err) {
+        logger.warn(`[KlbqWiki] 觉醒卡片渲染失败: ${err}`)
+        if (!fallback) return await e.reply('觉醒卡片渲染失败，请稍后重试。')
+      }
+    }
+
+    const lines = [`【${title}觉醒】`]
+    for (const group of groups) {
+      if (group.mode) lines.push(`\n◆ ${group.mode}`)
+      for (const a of group.awakenings) {
+        const cost = a.costs.length ? `（消耗 ${a.costs.map((c) => `${c.name}${c.value}`).join(' ')}）` : ''
+        lines.push(`\n觉醒${a.index} ${a.name}${cost}\n${a.description}`)
+      }
+    }
     return await e.reply(lines.join('\n'))
   }
 

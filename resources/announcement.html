@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; width: 100%; min-width: 0; min-height: 0; background: #10182f; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; overflow: hidden; }
+body { display: block; }
+.klbq-card { width: 100%; min-width: {{card_width}}px; position: relative; overflow: hidden; padding: 34px; color: #edf7ff; background: linear-gradient(135deg, #10182f 0%, #182a55 48%, #5d3ca0 100%); }
+.glow { position: absolute; right: -100px; top: -120px; width: 360px; height: 360px; border-radius: 50%; background: radial-gradient(circle, rgba(118, 221, 255, .48), rgba(118, 221, 255, 0) 68%); }
+.glow2 { position: absolute; left: -90px; bottom: -110px; width: 300px; height: 300px; border-radius: 50%; background: radial-gradient(circle, rgba(255, 200, 120, .34), rgba(255, 200, 120, 0) 70%); }
+.header { position: relative; margin-bottom: 22px; }
+.tag { display: inline-block; padding: 7px 14px; border-radius: 999px; background: rgba(255, 255, 255, .14); color: #aee9ff; font-size: 20px; letter-spacing: 1px; }
+.title { margin-top: 12px; font-size: 40px; font-weight: 800; line-height: 1.32; text-shadow: 0 4px 16px rgba(0, 0, 0, .28); word-break: break-all; }
+.subtitle { margin-top: 8px; color: #c6d5ff; font-size: 20px; }
+.list { position: relative; display: flex; flex-direction: column; gap: 10px; }
+.row { display: flex; align-items: center; gap: 16px; padding: 14px 18px; border-radius: 16px; background: rgba(255, 255, 255, .10); border: 1px solid rgba(255, 255, 255, .10); }
+.row-index { flex-shrink: 0; min-width: 62px; text-align: center; padding: 6px 10px; border-radius: 10px; background: rgba(118, 221, 255, .18); border: 1px solid rgba(118, 221, 255, .34); color: #aee9ff; font-size: 21px; font-weight: 700; }
+.row-index.latest { background: rgba(255, 230, 125, .20); border-color: rgba(255, 230, 125, .42); color: #ffe89a; }
+.row-main { flex: 1; min-width: 0; }
+.row-title { color: #ffffff; font-size: 22px; font-weight: 600; line-height: 1.4; word-break: break-all; overflow-wrap: anywhere; }
+.row-date { margin-top: 4px; color: rgba(198, 213, 255, .82); font-size: 17px; }
+.meta { position: relative; display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+.chip { padding: 7px 16px; border-radius: 999px; font-size: 19px; font-weight: 600; }
+.chip-type { background: rgba(118, 221, 255, .18); border: 1px solid rgba(118, 221, 255, .36); color: #aee9ff; }
+.chip-date { background: rgba(255, 230, 125, .18); border: 1px solid rgba(255, 230, 125, .36); color: #ffe89a; }
+.body { position: relative; display: flex; flex-direction: column; gap: 10px; }
+.block { border-radius: 14px; line-height: 1.68; word-break: break-word; overflow-wrap: anywhere; white-space: pre-wrap; }
+.block.heading { margin-top: 10px; padding: 12px 16px; background: rgba(118, 221, 255, .12); border-left: 5px solid #76ddff; color: #d8f2ff; font-size: 24px; font-weight: 750; }
+.block.text { padding: 12px 16px; background: rgba(255, 255, 255, .09); border: 1px solid rgba(255, 255, 255, .09); color: #ffffff; font-size: 20px; }
+.block.item { padding: 10px 16px 10px 34px; position: relative; background: rgba(255, 255, 255, .06); color: #e6eeff; font-size: 19px; }
+.block.item::before { content: "·"; position: absolute; left: 16px; color: #76ddff; font-weight: 800; }
+.truncated { position: relative; margin-top: 14px; padding: 12px 16px; border-radius: 14px; background: rgba(255, 230, 125, .16); border: 1px solid rgba(255, 230, 125, .28); color: #fff2a8; font-size: 19px; }
+.tip { position: relative; margin-top: 18px; padding: 14px 18px; border-radius: 16px; background: rgba(255, 255, 255, .10); border: 1px solid rgba(255, 255, 255, .14); color: #c6d5ff; font-size: 19px; }
+.footer { position: relative; margin-top: 22px; color: rgba(237, 247, 255, .62); font-size: 16px; text-align: right; word-break: break-all; }
+</style>
+</head>
+<body>
+<div id="container" class="klbq-card">
+  <div class="glow"></div>
+  <div class="glow2"></div>
+  <div class="header">
+    <div class="tag">卡拉彼丘 Wiki</div>
+    <div class="title">{{title}}</div>
+    <div class="subtitle">{{kind}}</div>
+  </div>
+  {{if isList}}
+  <div class="list">
+    {{each rows}}
+    <div class="row">
+      <div class="row-index{{if $index === 0}} latest{{/if}}">{{$value.index}}</div>
+      <div class="row-main">
+        <div class="row-title">{{$value.title}}</div>
+        {{if $value.date}}<div class="row-date">发布于 {{$value.date}}</div>{{/if}}
+      </div>
+    </div>
+    {{/each}}
+  </div>
+  {{else}}
+  <div class="meta">
+    {{if detail.tag}}<span class="chip chip-type">{{detail.tag}}</span>{{/if}}
+    {{if detail.published}}<span class="chip chip-date">发布于 {{detail.published}}</span>{{/if}}
+  </div>
+  <div class="body">
+    {{each blocks}}
+    <div class="block {{$value.type}}">{{$value.text}}</div>
+    {{/each}}
+  </div>
+  {{if truncated}}<div class="truncated">内容较长，此处仅展示前 {{limit}} 字，完整内容请查看下方 Wiki 链接。</div>{{/if}}
+  {{/if}}
+  {{if tip}}<div class="tip">{{tip}}</div>{{/if}}
+  <div class="footer">数据来源：wiki.biligame.com/klbq{{if sourceUrl}} · {{sourceUrl}}{{/if}}</div>
+</div>
+</body>
+</html>

@@ -20,6 +20,7 @@ import YAML from 'yaml'
 import { WikiClient, escapeHtml, unescapeHtml, cleanText } from './lib/wiki.js'
 import { buildAliasMap, ROLE_FIELDS, WEAPON_FIELDS } from './lib/aliases.js'
 import { ImageCache, toFileUrl } from './lib/image-cache.js'
+import { isPlausibleQuery } from './lib/query-guard.js'
 
 // puppeteer 渲染器：Yunzai 内置的全局渲染器
 let puppeteer = null
@@ -44,10 +45,13 @@ const MAP_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/map.html`
 const MAP_LIST_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/maps.html`
 const SKILLS_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/skills.html`
 const AWAKEN_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/awaken.html`
+const ANNOUNCEMENT_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/announcement.html`
 
 /** 默认配置 */
 const DEFAULT_CONFIG = {
   birthday_count: 5,
+  // 公告列表显示条数
+  announcement_count: 15,
   render_image: true,
   cat_language_image: false,
   // 默认关闭：单独发送 Wiki 链接可能触发其他插件（如 lin-plugin 复读只因）的 bug
@@ -61,6 +65,8 @@ const DEFAULT_CONFIG = {
   image_cache: true,
   // 图片缓存有效期（天），0 表示永不过期
   image_cache_ttl: 30,
+  // 查询不到条目时是否回复提示（关闭后静默忽略，避免聊天被误触发时刷屏）
+  not_found_reply: true,
   // 更新成功后自动重启 Yunzai（通过 redis 标记 + process.exit，依赖 PM2 自动重启）
   auto_restart: true,
   // 自动重启前等待秒数（确保消息发送完成）
@@ -88,6 +94,7 @@ function saveConfig(config) {
     const lines = ['# 卡拉彼丘 Wiki 查询插件配置', '# 修改后重启 Yunzai 生效（使用 -设置 命令修改会自动保存）', '']
     const descriptions = {
       birthday_count: '# 【生日查询】返回角色数量（1-20）',
+      announcement_count: '# 【公告查询】公告列表显示条数（5-50）',
       render_image: '# 【功能开关】将查询结果渲染为图片卡片',
       cat_language_image: '# 【喵言喵语】使用图片发送',
       send_detail_link: '# 【详情链接】发送 Wiki 链接',
@@ -97,6 +104,7 @@ function saveConfig(config) {
       card_width: '# 【图片布局】卡片最小宽度（像素，420-1200）',
       image_cache: '# 【图片缓存】将查询过的图片缓存到本地，避免重复下载',
       image_cache_ttl: '# 【图片缓存】有效期（天，0 表示永不过期）',
+      not_found_reply: '# 【查询提示】未找到条目时回复提示，关闭后静默忽略',
       auto_restart: '# 【插件更新】更新成功后自动重启 Yunzai（需 PM2 等进程管理器）',
       restart_delay: '# 【插件更新】自动重启前等待秒数（1-30，确保消息发送完成）',
       custom_aliases: '# 【别名】自定义别名映射，每行一条，格式：别名=页面标题',
@@ -133,8 +141,10 @@ const CONFIG_META = {
   send_detail_link:  { type: 'boolean', group: '功能开关', label: '详情链接',   desc: '查询结果后发送 Wiki 链接（关闭可避免触发其他插件复读检测）' },
   text_fallback:     { type: 'boolean', group: '功能开关', label: '文字回退',   desc: '图片渲染失败或超时后回退文字' },
   cat_language_image:{ type: 'boolean', group: '功能开关', label: '喵言图片',   desc: '喵言喵语使用图片发送' },
+  not_found_reply:   { type: 'boolean', group: '功能开关', label: '未找到提示', desc: '查询不到条目时回复提示，关闭后静默忽略' },
   auto_restart:      { type: 'boolean', group: '插件更新', label: '自动重启',   desc: '更新成功后自动重启 Yunzai（需 PM2 等进程管理器自动拉起）' },
   birthday_count:    { type: 'number',  group: '查询设置', label: '生日数量',   desc: '生日查询返回角色数量（1-20）' },
+  announcement_count:{ type: 'number',  group: '查询设置', label: '公告数量',   desc: '公告列表显示条数（5-50）' },
   restart_delay:     { type: 'number',  group: '插件更新', label: '重启延时',   desc: '自动重启前等待秒数（1-30，确保消息发送完成）' },
   grid_columns:      { type: 'number',  group: '图片布局', label: '列数',       desc: '图片卡片每行格子数（1-4）' },
   card_width:        { type: 'number',  group: '图片布局', label: '卡片宽度',   desc: '图片卡片最小宽度（420-1200 像素）' },
@@ -244,6 +254,8 @@ function helpData() {
         { name: '-生日', desc: '查看近期角色生日' },
         { name: '-日历', desc: '查看活动倒计时与当月角色生日' },
         { name: '-活动', desc: '查看当前活动图片与详情' },
+        { name: '-公告', desc: '列出近期公告（带序号）' },
+        { name: '-公告10', desc: '查看序号 10 的公告详情' },
         { name: '-兑换码', desc: '查看 Wiki 收录的可用兑换码' },
         { name: '-赛季', desc: '查看赛季结束时间' },
         { name: '-喵言喵语 / -喵', desc: '随机喵言喵语' },
@@ -334,6 +346,8 @@ export class KlbqWikiPlugin extends plugin {
     { reg: /^(活动|当前活动)$/, fn: (self, e) => self.handleActivities(e) },
     // 兑换码
     { reg: /^(兑换码|礼包码|cdk)$/i, fn: (self, e) => self.handleRedeemCodes(e) },
+    // 公告：-公告 列出近期公告，-公告10 查看第 10 条详情
+    { reg: /^(?:公告|公告资讯)(?:\s*(\d+))?$/, fn: (self, e, m) => self.handleAnnouncements(e, m[1]) },
     // 地图一览：按模式分组显示各模式的地图
     { reg: /^(地图|地图一览|全部地图|地图列表)$/, fn: (self, e) => self.handleMapList(e) },
     // 角色技能：支持角色别名，如 -心夏技能、-奶妈技能
@@ -391,6 +405,13 @@ export class KlbqWikiPlugin extends plugin {
   /** 分派查询 */
   async handleQuery(e, query) {
     if (!query) return await this.sendHelp(e)
+
+    // 误触发防护：聊天里以 - 开头的长文本、多行内容、纯符号不当作查询处理
+    // 静默忽略，不回复"未找到"，避免把别人的聊天内容复读进群里
+    if (!isPlausibleQuery(query)) {
+      logger.info(`[KlbqWiki] 忽略疑似误触发内容（${[...query].length} 字符）: ${query.slice(0, 40).replace(/\s+/g, ' ')}`)
+      return false
+    }
 
     try {
       for (const rule of this._dispatchRules) {
@@ -552,6 +573,11 @@ export class KlbqWikiPlugin extends plugin {
   async handleLookup(e, query) {
     const page = await this.wiki.lookup(query, this.aliasMap)
     if (!page) {
+      // 静默判定：关闭 not_found_reply、或裸 - 前缀的纯英文聊天内容（如 -xxx）
+      if (this._staySilentOnMiss(e, query)) {
+        logger.info(`[KlbqWiki] 未找到条目，静默忽略: ${query}`)
+        return false
+      }
       return await this.sendTextCard(e, '未找到条目', `未找到"${query}"的卡拉彼丘 Wiki 条目。\n请检查名称是否正确，或使用 -帮助 查看支持的查询。`, '查询提示')
     }
 
@@ -1135,6 +1161,187 @@ export class KlbqWikiPlugin extends plugin {
     return await this.sendTextCard(e, '卡拉彼丘兑换码', lines.join('\n').trim(), '兑换码')
   }
 
+  /**
+   * 判断"未找到条目"时是否保持静默
+   * - not_found_reply 关闭：全部静默
+   * - 显式前缀（#klbq / #卡丘 / #卡拉彼丘 / /klbq）：用户意图明确，正常回复提示
+   * - 裸 - 前缀且不含中日韩文字：多为聊天内容（如 -xxx、-abc），静默忽略
+   * @param {Object} e 消息事件
+   * @param {string} query 查询内容
+   * @returns {boolean} true 表示静默，不回复
+   */
+  _staySilentOnMiss(e, query) {
+    if (this.config.not_found_reply === false) return true
+    const msg = e?.msg || ''
+    if (/^(?:\/|#)(?:klbq|卡拉彼丘|卡丘)/i.test(msg)) return false
+    return !/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(query)
+  }
+
+  /**
+   * 公告查询
+   * 用法：
+   *   -公告        列出近期公告（带序号，序号 1 为最新）
+   *   -公告10      查看序号 10 的公告详情
+   * 支持 -公告 10 空格写法与 #klbq 公告 等前缀写法
+   */
+  async handleAnnouncements(e, numArg) {
+    const list = await this.wiki.announcements().catch((err) => {
+      logger.warn(`[KlbqWiki] 获取公告列表失败: ${err}`)
+      return null
+    })
+    if (list === null) {
+      return await this.sendTextCard(e, '网络错误', '获取公告列表失败，可能是网络波动，请稍后重试。', '查询提示')
+    }
+    if (!list.length) {
+      return await this.sendTextCard(e, '暂无公告', 'Wiki 暂无可解析的公告数据，请稍后重试。', '查询提示')
+    }
+
+    const prefix = extractPrefix(e.msg)
+
+    // 带序号：查看单条公告详情
+    if (numArg) {
+      const index = parseInt(numArg, 10)
+      if (!(index >= 1) || index > list.length) {
+        return await this.sendTextCard(
+          e,
+          '序号超出范围',
+          `公告序号需要在 1-${list.length} 之间，当前输入 ${index}。\n使用 ${prefix}公告 查看公告列表。`,
+          '查询提示',
+        )
+      }
+      const item = list[index - 1]
+      const detail = await this.wiki.announcementDetail(item.title).catch((err) => {
+        logger.warn(`[KlbqWiki] 获取公告详情失败: ${err}`)
+        return null
+      })
+      if (!detail || !detail.blocks.length) {
+        return await this.sendTextCard(e, '暂无内容', `未获取到"${item.title}"的正文内容，请稍后重试。`, '公告详情')
+      }
+      return await this.sendAnnouncementDetail(e, prefix, index, list.length, item, detail)
+    }
+
+    // 不带序号：列出近期公告
+    const count = Math.max(5, Math.min(50, parseInt(this.config.announcement_count) || 15))
+    const rows = list.slice(0, count).map((item, i) => ({
+      index: i + 1,
+      title: item.title,
+      date: item.date,
+    }))
+    const kind = `近期公告 · 共 ${list.length} 条 · 序号 1 为最新`
+    const tip = `查看单条详情：${prefix}公告10（序号范围 1-${list.length}）`
+
+    if (this.config.render_image && puppeteer) {
+      const { cardWidth, timeout, fallback } = renderSettings(this.config)
+      try {
+        const img = await puppeteer.screenshot('klbq-wiki', {
+          tplFile: ANNOUNCEMENT_TEMPLATE,
+          saveId: 'announce_' + Date.now(),
+          imgType: 'jpeg',
+          quality: 88,
+          title: '公告资讯',
+          kind,
+          isList: true,
+          rows,
+          detail: {},
+          blocks: [],
+          truncated: false,
+          limit: 0,
+          sourceUrl: '',
+          tip,
+          card_width: cardWidth,
+          pageGotoParams: { timeout: timeout * 1000, waitUntil: 'networkidle2' },
+        })
+        if (img) {
+          await e.reply(img)
+          return true
+        }
+      } catch (err) {
+        logger.warn(`[KlbqWiki] 公告列表渲染失败: ${err}`)
+        if (!fallback) return await e.reply('公告列表渲染失败，请稍后重试。')
+      }
+    }
+
+    const lines = ['卡拉彼丘 Wiki：公告资讯', kind, '']
+    for (const row of rows) {
+      lines.push(`${row.index}. ${row.title}${row.date ? `（${row.date}）` : ''}`)
+    }
+    lines.push('', tip)
+    return await e.reply(lines.join('\n'))
+  }
+
+  /** 发送公告详情卡片，正文过长时截断并提示查看 Wiki */
+  async sendAnnouncementDetail(e, prefix, index, total, item, detail) {
+    const MAX_CHARS = 1500
+    const blocks = []
+    let used = 0
+    let truncated = false
+    for (const block of detail.blocks) {
+      if (used >= MAX_CHARS) {
+        truncated = true
+        break
+      }
+      const remain = MAX_CHARS - used
+      if (block.text.length > remain) {
+        blocks.push({ type: block.type, text: block.text.slice(0, remain) + '…' })
+        used = MAX_CHARS
+        truncated = true
+        break
+      }
+      blocks.push(block)
+      used += block.text.length
+    }
+
+    const sourceUrl = this.wiki.pageUrl(item.title)
+    const kind = `公告详情 · 序号 ${index} / 共 ${total} 条`
+    const tip = `查看其他公告：${prefix}公告<n>（序号范围 1-${total}）`
+
+    if (this.config.render_image && puppeteer) {
+      const { cardWidth, timeout, fallback } = renderSettings(this.config)
+      try {
+        const img = await puppeteer.screenshot('klbq-wiki', {
+          tplFile: ANNOUNCEMENT_TEMPLATE,
+          saveId: 'announce_detail_' + Date.now(),
+          imgType: 'jpeg',
+          quality: 88,
+          title: item.title,
+          kind,
+          isList: false,
+          rows: [],
+          detail,
+          blocks,
+          truncated,
+          limit: MAX_CHARS,
+          sourceUrl,
+          tip,
+          card_width: cardWidth,
+          pageGotoParams: { timeout: timeout * 1000, waitUntil: 'networkidle2' },
+        })
+        if (img) {
+          await e.reply(img)
+          // 正文被截断时，按配置补发原文链接方便查看全文
+          if (truncated && this.config.send_detail_link) await e.reply(sourceUrl)
+          return true
+        }
+      } catch (err) {
+        logger.warn(`[KlbqWiki] 公告详情渲染失败: ${err}`)
+        if (!fallback) return await e.reply('公告详情渲染失败，请稍后重试。')
+      }
+    }
+
+    const lines = [`卡拉彼丘 Wiki：${item.title}`, kind, '']
+    if (detail.tag) lines.push(`类型：${detail.tag}`)
+    if (detail.published) lines.push(`发布时间：${detail.published}`)
+    lines.push('')
+    for (const block of blocks) {
+      if (block.type === 'heading') lines.push(`【${block.text}】`)
+      else if (block.type === 'item') lines.push(`· ${block.text}`)
+      else lines.push(block.text)
+    }
+    if (truncated) lines.push('', `（内容较长，仅展示前 ${MAX_CHARS} 字，完整内容：${sourceUrl}）`)
+    lines.push('', tip)
+    return await e.reply(lines.join('\n'))
+  }
+
   /** 皮肤查询 */
   async handleSkin(e, roleQuery, skinQuery) {
     const role = this.aliasMap.get(roleQuery.toLowerCase()) || roleQuery
@@ -1457,6 +1664,7 @@ export class KlbqWikiPlugin extends plugin {
       // 范围校验
       const ranges = {
         birthday_count: [1, 20],
+        announcement_count: [5, 50],
         grid_columns: [1, 4],
         card_width: [420, 1200],
         image_timeout: [1, 60],

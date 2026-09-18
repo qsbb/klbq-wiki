@@ -15,6 +15,7 @@
 
 import plugin from '../../lib/plugins/plugin.js'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import YAML from 'yaml'
 import { WikiClient, escapeHtml, unescapeHtml, cleanText } from './lib/wiki.js'
@@ -55,6 +56,11 @@ const DEFAULT_CONFIG = {
   announcement_count: 15,
   // 语音点选会话有效期（秒），超时后 -1 -2 不再生效
   voice_session_ttl: 300,
+  // 语音文本本地缓存有效期（天，0 表示永不过期）
+  voice_cache_ttl: 7,
+  // 语音发送方式：false=适配器直接拉取远程 URL；true=先下载到临时目录再发送（发完即删）
+  // 点选后日志显示已发送但群里看不到语音时，设为 true
+  voice_send_local: false,
   render_image: true,
   cat_language_image: false,
   // 默认关闭：单独发送 Wiki 链接可能触发其他插件（如 lin-plugin 复读只因）的 bug
@@ -105,6 +111,8 @@ function saveConfig(config) {
       birthday_count: '# 【生日查询】返回角色数量（1-20）',
       announcement_count: '# 【公告查询】公告列表显示条数（5-50）',
       voice_session_ttl: '# 【语音查询】点选会话有效期（秒，30-1800）',
+      voice_cache_ttl: '# 【语音查询】语音文本本地缓存有效期（天，0 表示永不过期）',
+      voice_send_local: '# 【语音查询】语音先下载再发送（适配器拉取远程失败时开启）',
       render_image: '# 【功能开关】将查询结果渲染为图片卡片',
       cat_language_image: '# 【喵言喵语】使用图片发送',
       send_detail_link: '# 【详情链接】发送 Wiki 链接',
@@ -156,6 +164,8 @@ const CONFIG_META = {
   birthday_count:    { type: 'number',  group: '查询设置', label: '生日数量',   desc: '生日查询返回角色数量（1-20）' },
   announcement_count:{ type: 'number',  group: '查询设置', label: '公告数量',   desc: '公告列表显示条数（5-50）' },
   voice_session_ttl: { type: 'number',  group: '查询设置', label: '语音时效',   desc: '语音点选会话有效期（秒，30-1800）' },
+  voice_cache_ttl:   { type: 'number',  group: '查询设置', label: '语音缓存',   desc: '语音文本本地缓存有效期（天，0 表示永不过期）' },
+  voice_send_local:  { type: 'boolean', group: '查询设置', label: '语音本地下载', desc: '语音先下载到临时目录再发送（适配器拉取远程语音失败时开启）' },
   restart_delay:     { type: 'number',  group: '插件更新', label: '重启延时',   desc: '自动重启前等待秒数（1-30，确保消息发送完成）' },
   grid_columns:      { type: 'number',  group: '图片布局', label: '列数',       desc: '图片卡片每行格子数（1-4）' },
   card_width:        { type: 'number',  group: '图片布局', label: '卡片宽度',   desc: '图片卡片最小宽度（420-1200 像素）' },
@@ -1217,7 +1227,7 @@ export class KlbqWikiPlugin extends plugin {
     if (!page) return await this.sendTextCard(e, '未找到角色', `未找到角色"${roleQuery}"。`, '查询提示')
     const title = page.title || role
 
-    const groups = await this.wiki.roleVoices(title).catch((err) => {
+    const groups = await this.wiki.roleVoices(title, this._voiceCacheTtlDays()).catch((err) => {
       logger.warn(`[KlbqWiki] 获取语音列表失败: ${err}`)
       return undefined
     })
@@ -1360,7 +1370,10 @@ export class KlbqWikiPlugin extends plugin {
     if (!session) return false
     if (Date.now() > session.expiresAt) {
       this._voiceSessions.delete(e.user_id)
-      return false
+      // 有会话但已超时：提示用户重新查询（无会话的情况仍保持静默，避免聊天噪音）
+      const ttlMin = Math.round(this._voiceTtlMs() / 60000)
+      await e.reply(`语音点选已超时（有效期 ${ttlMin} 分钟，点选会自动续期）。\n请重新发送 -${session.role}语音 查询后再点选。`)
+      return true
     }
     const id = parseInt(m[1], 10)
     if (id < 1 || id > session.voices.length) {
@@ -1371,15 +1384,49 @@ export class KlbqWikiPlugin extends plugin {
     session.expiresAt = Date.now() + this._voiceTtlMs()
     const voice = session.voices[id - 1]
     try {
-      // 语音文件复用图片缓存：下载到本地后再发送，避免适配器拉取远程失败
-      const file = await this.imageCache.get(voice.file)
-      await e.reply(segment.record(file))
+      await this._sendVoice(e, voice)
       logger.info(`[KlbqWiki] 语音点选: user=${e.user_id} #${id} [${voice.lang}][${voice.scene}]`)
     } catch (err) {
       logger.warn(`[KlbqWiki] 语音发送失败: ${err}`)
       await e.reply(`语音发送失败：[${voice.langName}][${voice.scene}] ${voice.text}`)
     }
     return true
+  }
+
+  /**
+   * 发送语音：音频不做本地持久缓存
+   * 优先让适配器直接拉取远程 URL；不支持时临时下载到系统临时目录，发送后立即删除
+   */
+  async _sendVoice(e, voice) {
+    // voice_send_local 开启时跳过远程直发，先下载到系统临时目录再发送
+    // （用于适配器不支持/静默拉取远程语音失败的场景）
+    if (!this.config.voice_send_local) {
+      try {
+        await e.reply(segment.record(voice.file))
+        return
+      } catch (err) {
+        logger.warn(`[KlbqWiki] 语音远程发送失败，改为临时下载发送: ${err}`)
+      }
+    }
+    const tmp = await this._downloadVoiceTmp(voice.file)
+    try {
+      await e.reply(segment.record(tmp))
+    } finally {
+      try {
+        fs.unlinkSync(tmp)
+      } catch {}
+    }
+  }
+
+  /** 临时下载语音文件到系统临时目录（用完即删） */
+  async _downloadVoiceTmp(url) {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(15000) })
+    if (!resp.ok) throw new Error(`语音下载失败 HTTP ${resp.status}`)
+    const buf = Buffer.from(await resp.arrayBuffer())
+    if (!buf.length) throw new Error('语音下载内容为空')
+    const tmp = path.join(os.tmpdir(), `klbq-voice-${Date.now()}-${Math.floor(Math.random() * 10000)}.mp3`)
+    fs.writeFileSync(tmp, buf)
+    return tmp
   }
 
   /** 写入语音点选会话（同一用户的新查询覆盖旧会话） */
@@ -1401,6 +1448,12 @@ export class KlbqWikiPlugin extends plugin {
   _voiceTtlMs() {
     const sec = Math.max(30, Math.min(1800, parseInt(this.config.voice_session_ttl) || 300))
     return sec * 1000
+  }
+
+  /** 语音文本本地缓存有效期（天） */
+  _voiceCacheTtlDays() {
+    const v = parseInt(this.config.voice_cache_ttl)
+    return Number.isFinite(v) ? Math.max(0, Math.min(365, v)) : 7
   }
 
   /** 渲染语音列表卡片，返回 segment 或 null */
@@ -1912,6 +1965,7 @@ export class KlbqWikiPlugin extends plugin {
         birthday_count: [1, 20],
         announcement_count: [5, 50],
         voice_session_ttl: [30, 1800],
+        voice_cache_ttl: [0, 365],
         grid_columns: [1, 4],
         card_width: [420, 1200],
         image_timeout: [1, 60],

@@ -48,6 +48,7 @@ const SKILLS_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/skills.html`
 const AWAKEN_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/awaken.html`
 const ANNOUNCEMENT_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/announcement.html`
 const VOICE_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/voice.html`
+const VOICE_SESSION_FILE = `./plugins/${PLUGIN_NAME}/data/voice-sessions.json`
 
 /** 默认配置 */
 const DEFAULT_CONFIG = {
@@ -340,6 +341,8 @@ export class KlbqWikiPlugin extends plugin {
     this.aliasMap = buildAliasMap(this.config.custom_aliases)
     // 语音点选会话：user_id -> { role, voices, expiresAt }（每个用户相互独立）
     this._voiceSessions = new Map()
+    // 从磁盘恢复未过期的会话（插件热重载/重启后点选仍有效）
+    this._loadVoiceSessions()
   }
 
   /** 主命令入口 */
@@ -1366,7 +1369,12 @@ export class KlbqWikiPlugin extends plugin {
   async onVoicePick(e) {
     const m = (e.msg || '').trim().match(/^-(\d{1,4})$/)
     if (!m) return false
-    const session = this._voiceSessions.get(e.user_id)
+    let session = this._voiceSessions.get(e.user_id)
+    if (!session) {
+      // 内存未命中：尝试从磁盘恢复（插件热重载/重启后内存会话丢失的场景）
+      this._loadVoiceSessions()
+      session = this._voiceSessions.get(e.user_id)
+    }
     if (!session) return false
     if (Date.now() > session.expiresAt) {
       this._voiceSessions.delete(e.user_id)
@@ -1442,6 +1450,36 @@ export class KlbqWikiPlugin extends plugin {
       ...payload,
       expiresAt: Date.now() + this._voiceTtlMs(),
     })
+    this._saveVoiceSessions()
+  }
+
+  /** 语音会话持久化到磁盘（插件热重载/重启后可恢复） */
+  _saveVoiceSessions() {
+    try {
+      const dir = path.dirname(VOICE_SESSION_FILE)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      const obj = {}
+      for (const [key, value] of this._voiceSessions) obj[key] = value
+      fs.writeFileSync(VOICE_SESSION_FILE, JSON.stringify(obj), 'utf8')
+    } catch (err) {
+      logger.warn(`[KlbqWiki] 语音会话保存失败: ${err}`)
+    }
+  }
+
+  /** 从磁盘恢复未过期的语音会话 */
+  _loadVoiceSessions() {
+    try {
+      if (!fs.existsSync(VOICE_SESSION_FILE)) return
+      const obj = JSON.parse(fs.readFileSync(VOICE_SESSION_FILE, 'utf8'))
+      const now = Date.now()
+      for (const [key, value] of Object.entries(obj || {})) {
+        if (value && Array.isArray(value.voices) && value.expiresAt > now) {
+          this._voiceSessions.set(Number(key) || key, value)
+        }
+      }
+    } catch (err) {
+      logger.warn(`[KlbqWiki] 语音会话恢复失败: ${err}`)
+    }
   }
 
   /** 语音点选会话有效期（毫秒） */
@@ -2125,9 +2163,11 @@ export class KlbqWikiPlugin extends plugin {
 
     // 强制更新不走 merge：直接 fetch 后硬重置到远端 main
     // 本地改动/本地提交/分支分叉等任何脏状态都能自愈
+    // -c core.fileMode=false：忽略文件权限位变化
+    // （部分同步工具会把文件改成 755，导致 git 误判本地修改、更新被卡住）
     const cmd = force
-      ? 'git fetch origin && git reset --hard origin/main && git clean -fd'
-      : 'git pull --ff-only'
+      ? 'git -c core.fileMode=false fetch origin && git -c core.fileMode=false reset --hard origin/main && git -c core.fileMode=false clean -fd'
+      : 'git -c core.fileMode=false pull --ff-only'
 
     await e.reply(force ? '开始强制更新 klbq-wiki...' : '开始更新 klbq-wiki...')
     logger.info(`[KlbqWiki] 执行更新: ${cmd}`)

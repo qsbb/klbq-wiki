@@ -1223,24 +1223,30 @@ export class KlbqWikiPlugin extends plugin {
     }
 
     const prefix = extractPrefix(e.msg)
-    const LANG_ORDER = { CN: 0, JP: 1, EN: 2 }
     const LANG_NAMES = { CN: '中文', JP: '日文', EN: '英文' }
     const ttlMin = Math.round(this._voiceTtlMs() / 60000)
 
-    // 拍平并全局编号：分类 → 语言（中文优先）→ 页面原顺序
+    // 拍平并全局编号：语言（中文优先）→ 分类 → 页面原顺序
+    // 合并消息中先出中文版全部分类卡片，再依次出日文、英文卡片
     let id = 0
     const all = []
-    const categorized = groups.map((g) => {
-      const voices = [...g.voices]
-        .sort((a, b) => (LANG_ORDER[a.lang] ?? 9) - (LANG_ORDER[b.lang] ?? 9))
-        .map((v) => {
+    const byLangCat = []
+    for (const lang of ['CN', 'JP', 'EN']) {
+      for (const g of groups) {
+        const voices = g.voices.filter((v) => v.lang === lang)
+        if (!voices.length) continue
+        const items = voices.map((v) => {
           id++
-          const item = { ...v, id, category: g.category, langName: LANG_NAMES[v.lang] || v.lang }
+          const item = { ...v, id, category: g.category, langName: LANG_NAMES[lang] || lang }
           all.push(item)
           return item
         })
-      return { category: g.category, voices }
-    })
+        byLangCat.push({ lang, langName: LANG_NAMES[lang] || lang, category: g.category, voices: items })
+      }
+    }
+    const langCounts = ['CN', 'JP', 'EN']
+      .map((lang) => ({ lang, n: all.filter((v) => v.lang === lang).length }))
+      .filter((x) => x.n > 0)
 
     // 关键词模式：不分类，重新按 1..N 编号，单张列表图
     const kw = (keyword || '').trim()
@@ -1274,36 +1280,33 @@ export class KlbqWikiPlugin extends plugin {
       return await e.reply(lines.join('\n'))
     }
 
-    // 完整列表：按分类逐张卡片，合并转发为一条消息
+    // 完整列表：先中文版全部分类卡片，再依次日文、英文，合并转发为一条消息
     this._setVoiceSession(e, { role: title, voices: all })
     const total = all.length
     const nickname = '卡拉彼丘 Wiki'
     const tipText = `发送 ${prefix}1 ~ ${prefix}${total} 收听对应语音（${ttlMin} 分钟内有效，仅你本人可用）`
+    const langSummary = langCounts.map((x) => `${LANG_NAMES[x.lang]} ${x.n} 条`).join(' / ')
     const forwardMsg = [
       {
         user_id: e.user_id || 10000,
         nickname,
         message: [
-          `【${title}语音】共 ${total} 条，分 ${categorized.length} 类（中文优先，依次为日文/英文）\n${tipText}\n关键词筛选：${prefix}${title}语音 关键词`,
+          `【${title}语音】共 ${total} 条（${langSummary}）\n${tipText}\n关键词筛选：${prefix}${title}语音 关键词`,
         ],
       },
     ]
 
-    // 渲染各分类卡片（任一失败则整体回退文字，保证序号一致）
+    // 渲染各"语言×分类"卡片（任一失败则整体回退文字，保证序号一致）
     const useImage = !!this.config.render_image && !!puppeteer
     if (useImage) {
       const images = []
-      for (const g of categorized) {
-        const sections = []
-        for (const lang of ['CN', 'JP', 'EN']) {
-          const rows = g.voices.filter((v) => v.lang === lang)
-          if (rows.length) sections.push({ name: LANG_NAMES[lang], langCls: lang.toLowerCase(), rows })
-        }
+      for (const g of byLangCat) {
         const img = await this._renderVoiceCard({
-          title: `${title}语音 · ${g.category}`,
+          title: `${title}语音 · ${g.langName} · ${g.category}`,
           kind: `第 ${g.voices[0].id}-${g.voices[g.voices.length - 1].id} 条 / 共 ${total} 条`,
-          sections,
-          tip: g === categorized[0] ? tipText : '',
+          // 卡片标题已含语言，行内不再重复显示语言标签（langName 仅关键词卡需要）
+          sections: [{ name: '', langCls: g.lang.toLowerCase(), rows: g.voices.map((v) => ({ id: v.id, scene: v.scene, text: v.text, lang: v.lang })) }],
+          tip: images.length === 0 ? tipText : '',
         })
         images.push(img)
       }
@@ -1323,17 +1326,10 @@ export class KlbqWikiPlugin extends plugin {
       }
     }
 
-    // 文字回退：合并转发纯文字（保留相同序号）
-    for (const g of categorized) {
-      const lines = [`【${title}语音 · ${g.category}】`]
-      let curLang = ''
-      for (const v of g.voices) {
-        if (v.lang !== curLang) {
-          curLang = v.lang
-          lines.push(`-- ${LANG_NAMES[curLang] || curLang} --`)
-        }
-        lines.push(`${v.id}. [${v.scene}] ${v.text}`)
-      }
+    // 文字回退：合并转发纯文字（保留相同序号与排序）
+    for (const g of byLangCat) {
+      const lines = [`【${title}语音 · ${g.langName} · ${g.category}】`]
+      for (const v of g.voices) lines.push(`${v.id}. [${v.scene}] ${v.text}`)
       forwardMsg.push({ user_id: e.user_id || 10000, nickname, message: [lines.join('\n')] })
     }
     try {

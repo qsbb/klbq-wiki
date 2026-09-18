@@ -1,7 +1,7 @@
 {
   "name": "klbq-wiki",
-  "version": "1.13.1",
-  "description": "卡拉彼丘 Wiki 查询插件 - 查询角色、技能、武器、皮肤、地图、公告、活动、兑换码、生日与赛季",
+  "version": "1.14.0",
+  "description": "卡拉彼丘 Wiki 查询插件 - 查询角色、技能、武器、皮肤、地图、公告、语音、活动、兑换码、生日与赛季",
   "main": "index.js",
   "type": "module",
   "author": "凌溪",

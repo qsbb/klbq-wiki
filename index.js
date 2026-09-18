@@ -46,12 +46,15 @@ const MAP_LIST_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/maps.html`
 const SKILLS_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/skills.html`
 const AWAKEN_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/awaken.html`
 const ANNOUNCEMENT_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/announcement.html`
+const VOICE_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/voice.html`
 
 /** 默认配置 */
 const DEFAULT_CONFIG = {
   birthday_count: 5,
   // 公告列表显示条数
   announcement_count: 15,
+  // 语音点选会话有效期（秒），超时后 -1 -2 不再生效
+  voice_session_ttl: 300,
   render_image: true,
   cat_language_image: false,
   // 默认关闭：单独发送 Wiki 链接可能触发其他插件（如 lin-plugin 复读只因）的 bug
@@ -95,6 +98,7 @@ function saveConfig(config) {
     const descriptions = {
       birthday_count: '# 【生日查询】返回角色数量（1-20）',
       announcement_count: '# 【公告查询】公告列表显示条数（5-50）',
+      voice_session_ttl: '# 【语音查询】点选会话有效期（秒，30-1800）',
       render_image: '# 【功能开关】将查询结果渲染为图片卡片',
       cat_language_image: '# 【喵言喵语】使用图片发送',
       send_detail_link: '# 【详情链接】发送 Wiki 链接',
@@ -145,6 +149,7 @@ const CONFIG_META = {
   auto_restart:      { type: 'boolean', group: '插件更新', label: '自动重启',   desc: '更新成功后自动重启 Yunzai（需 PM2 等进程管理器自动拉起）' },
   birthday_count:    { type: 'number',  group: '查询设置', label: '生日数量',   desc: '生日查询返回角色数量（1-20）' },
   announcement_count:{ type: 'number',  group: '查询设置', label: '公告数量',   desc: '公告列表显示条数（5-50）' },
+  voice_session_ttl: { type: 'number',  group: '查询设置', label: '语音时效',   desc: '语音点选会话有效期（秒，30-1800）' },
   restart_delay:     { type: 'number',  group: '插件更新', label: '重启延时',   desc: '自动重启前等待秒数（1-30，确保消息发送完成）' },
   grid_columns:      { type: 'number',  group: '图片布局', label: '列数',       desc: '图片卡片每行格子数（1-4）' },
   card_width:        { type: 'number',  group: '图片布局', label: '卡片宽度',   desc: '图片卡片最小宽度（420-1200 像素）' },
@@ -235,6 +240,8 @@ function helpData() {
         { name: '-心夏武器', desc: '查询角色武器' },
         { name: '-心夏技能', desc: '查询角色技能，支持角色别名' },
         { name: '-心夏觉醒', desc: '查询角色觉醒效果与激活消耗' },
+        { name: '-心夏语音', desc: '分类语音列表（中文优先），按序号点听' },
+        { name: '-心夏语音 机动', desc: '关键词筛选语音，-1 ~ -N 收听' },
       ],
     },
     {
@@ -299,6 +306,12 @@ export class KlbqWikiPlugin extends plugin {
           fnc: 'onKlbqCommand',
           log: true,
         },
+        {
+          // 语音点选：-1 -2 ...（仅语音查询后的时效内有效，仅查询者本人可用）
+          reg: /^-\d{1,4}$/,
+          fnc: 'onVoicePick',
+          log: false,
+        },
       ],
     })
     this.config = loadConfig()
@@ -309,6 +322,8 @@ export class KlbqWikiPlugin extends plugin {
     })
     this.wiki = new WikiClient({ imageCache: this.imageCache })
     this.aliasMap = buildAliasMap(this.config.custom_aliases)
+    // 语音点选会话：user_id -> { role, voices, expiresAt }（每个用户相互独立）
+    this._voiceSessions = new Map()
   }
 
   /** 主命令入口 */
@@ -354,6 +369,8 @@ export class KlbqWikiPlugin extends plugin {
     { reg: /^(.+?)技能$/, fn: (self, e, m) => self.handleRoleSkills(e, m[1]) },
     // 角色觉醒：支持角色别名，如 -心夏觉醒、-奶妈觉醒（捕获组 trim 兼容"心夏 觉醒"写法）
     { reg: /^(.+?)觉醒$/, fn: (self, e, m) => self.handleRoleAwakenings(e, m[1].trim()) },
+    // 角色语音：-心夏语音 / -心夏语音 机动（支持别名，需放在皮肤规则之前）
+    { reg: /^(.+?)语音\s*(.*)$/, fn: (self, e, m) => self.handleVoice(e, m[1].trim(), (m[2] || '').trim()) },
     // 皮肤：角色名 皮肤名（空格分隔）
     { reg: /^(.+?)\s+(.+)$/, fn: async (self, e, m) => {
       const role = m[1], skin = m[2]
@@ -1178,6 +1195,233 @@ export class KlbqWikiPlugin extends plugin {
   }
 
   /**
+   * 角色语音查询
+   * 用法：
+   *   -心夏语音        按分类合并转发语音列表（多语言分开、中文优先，每条带序号）
+   *   -心夏语音 机动   按关键词筛选，单张列表图片，不分类
+   *   -1 / -2 ...      点选序号收听语音（有时效，仅查询者本人，每个用户相互独立）
+   */
+  async handleVoice(e, roleQuery, keyword) {
+    const role = this.aliasMap.get(roleQuery.toLowerCase()) || roleQuery
+    let page = await this.wiki.queryPage(role)
+    if (!page) {
+      const found = await this.wiki.searchTitle(role)
+      page = found ? await this.wiki.queryPage(found) : null
+    }
+    if (!page) return await this.sendTextCard(e, '未找到角色', `未找到角色"${roleQuery}"。`, '查询提示')
+    const title = page.title || role
+
+    const groups = await this.wiki.roleVoices(title).catch((err) => {
+      logger.warn(`[KlbqWiki] 获取语音列表失败: ${err}`)
+      return undefined
+    })
+    if (groups === undefined) {
+      return await this.sendTextCard(e, '网络错误', '获取语音列表失败，可能是网络波动，请稍后重试。', '查询提示')
+    }
+    if (!groups || !groups.length) {
+      return await this.sendTextCard(e, '暂无语音', `"${title}"没有可解析的语音台词页面。`, '查询提示')
+    }
+
+    const prefix = extractPrefix(e.msg)
+    const LANG_ORDER = { CN: 0, JP: 1, EN: 2 }
+    const LANG_NAMES = { CN: '中文', JP: '日文', EN: '英文' }
+    const ttlMin = Math.round(this._voiceTtlMs() / 60000)
+
+    // 拍平并全局编号：分类 → 语言（中文优先）→ 页面原顺序
+    let id = 0
+    const all = []
+    const categorized = groups.map((g) => {
+      const voices = [...g.voices]
+        .sort((a, b) => (LANG_ORDER[a.lang] ?? 9) - (LANG_ORDER[b.lang] ?? 9))
+        .map((v) => {
+          id++
+          const item = { ...v, id, category: g.category, langName: LANG_NAMES[v.lang] || v.lang }
+          all.push(item)
+          return item
+        })
+      return { category: g.category, voices }
+    })
+
+    // 关键词模式：不分类，重新按 1..N 编号，单张列表图
+    const kw = (keyword || '').trim()
+    if (kw) {
+      const lower = kw.toLowerCase()
+      const matches = all.filter(
+        (v) => v.text.toLowerCase().includes(lower) || v.scene.toLowerCase().includes(lower),
+      )
+      if (!matches.length) {
+        return await this.sendTextCard(e, '未找到语音', `"${title}"没有包含"${kw}"的语音。`, '语音查询')
+      }
+      const rows = matches.map((v, i) => ({ ...v, id: i + 1 }))
+      this._setVoiceSession(e, { role: title, voices: matches })
+
+      const img = await this._renderVoiceCard({
+        title: `${title}语音`,
+        kind: `关键词"${kw}" · 匹配 ${matches.length} 条 / 共 ${all.length} 条`,
+        sections: [{ name: '', langCls: '', rows }],
+        tip: `发送 ${prefix}1 ~ ${prefix}${rows.length} 收听对应语音（${ttlMin} 分钟内有效，仅你本人可用）`,
+      })
+      if (img) {
+        await e.reply(img)
+        return true
+      }
+      if (this.config.render_image && puppeteer && !renderSettings(this.config).fallback) {
+        return await e.reply('语音列表渲染失败，请稍后重试。')
+      }
+      const lines = [`【${title}语音】关键词"${kw}" · 匹配 ${matches.length} 条`]
+      for (const v of rows) lines.push(`${v.id}. [${v.langName}][${v.scene}] ${v.text}`)
+      lines.push('', `发送 ${prefix}1 ~ ${prefix}${rows.length} 收听对应语音（${ttlMin} 分钟内有效，仅你本人可用）`)
+      return await e.reply(lines.join('\n'))
+    }
+
+    // 完整列表：按分类逐张卡片，合并转发为一条消息
+    this._setVoiceSession(e, { role: title, voices: all })
+    const total = all.length
+    const nickname = '卡拉彼丘 Wiki'
+    const tipText = `发送 ${prefix}1 ~ ${prefix}${total} 收听对应语音（${ttlMin} 分钟内有效，仅你本人可用）`
+    const forwardMsg = [
+      {
+        user_id: e.user_id || 10000,
+        nickname,
+        message: [
+          `【${title}语音】共 ${total} 条，分 ${categorized.length} 类（中文优先，依次为日文/英文）\n${tipText}\n关键词筛选：${prefix}${title}语音 关键词`,
+        ],
+      },
+    ]
+
+    // 渲染各分类卡片（任一失败则整体回退文字，保证序号一致）
+    const useImage = !!this.config.render_image && !!puppeteer
+    if (useImage) {
+      const images = []
+      for (const g of categorized) {
+        const sections = []
+        for (const lang of ['CN', 'JP', 'EN']) {
+          const rows = g.voices.filter((v) => v.lang === lang)
+          if (rows.length) sections.push({ name: LANG_NAMES[lang], langCls: lang.toLowerCase(), rows })
+        }
+        const img = await this._renderVoiceCard({
+          title: `${title}语音 · ${g.category}`,
+          kind: `第 ${g.voices[0].id}-${g.voices[g.voices.length - 1].id} 条 / 共 ${total} 条`,
+          sections,
+          tip: g === categorized[0] ? tipText : '',
+        })
+        images.push(img)
+      }
+      if (images.every(Boolean)) {
+        for (const img of images) {
+          forwardMsg.push({ user_id: e.user_id || 10000, nickname, message: [img] })
+        }
+        try {
+          const msg = await this._makeForwardMsg(e, forwardMsg)
+          await e.reply(msg)
+          return true
+        } catch (err) {
+          logger.warn(`[KlbqWiki] 语音列表合并转发失败，改为逐条发送: ${err}`)
+          for (const node of forwardMsg) await e.reply(node.message[0])
+          return true
+        }
+      }
+    }
+
+    // 文字回退：合并转发纯文字（保留相同序号）
+    for (const g of categorized) {
+      const lines = [`【${title}语音 · ${g.category}】`]
+      let curLang = ''
+      for (const v of g.voices) {
+        if (v.lang !== curLang) {
+          curLang = v.lang
+          lines.push(`-- ${LANG_NAMES[curLang] || curLang} --`)
+        }
+        lines.push(`${v.id}. [${v.scene}] ${v.text}`)
+      }
+      forwardMsg.push({ user_id: e.user_id || 10000, nickname, message: [lines.join('\n')] })
+    }
+    try {
+      const msg = await this._makeForwardMsg(e, forwardMsg)
+      await e.reply(msg)
+    } catch (err) {
+      logger.warn(`[KlbqWiki] 语音文字合并转发失败，改为逐条发送: ${err}`)
+      for (const node of forwardMsg) await e.reply(node.message[0])
+    }
+    return true
+  }
+
+  /**
+   * 语音点选：-1 -2 ...
+   * 仅查询者本人在会话有效期内可用；无会话或已超时时静默忽略
+   * 每个用户的会话相互独立（按 user_id 区分）
+   */
+  async onVoicePick(e) {
+    const m = (e.msg || '').trim().match(/^-(\d{1,4})$/)
+    if (!m) return false
+    const session = this._voiceSessions.get(e.user_id)
+    if (!session) return false
+    if (Date.now() > session.expiresAt) {
+      this._voiceSessions.delete(e.user_id)
+      return false
+    }
+    const id = parseInt(m[1], 10)
+    if (id < 1 || id > session.voices.length) {
+      await e.reply(`语音序号 ${id} 超出范围（1-${session.voices.length}）。`)
+      return true
+    }
+    // 点选刷新时效
+    session.expiresAt = Date.now() + this._voiceTtlMs()
+    const voice = session.voices[id - 1]
+    try {
+      // 语音文件复用图片缓存：下载到本地后再发送，避免适配器拉取远程失败
+      const file = await this.imageCache.get(voice.file)
+      await e.reply(segment.record(file))
+      logger.info(`[KlbqWiki] 语音点选: user=${e.user_id} #${id} [${voice.lang}][${voice.scene}]`)
+    } catch (err) {
+      logger.warn(`[KlbqWiki] 语音发送失败: ${err}`)
+      await e.reply(`语音发送失败：[${voice.langName}][${voice.scene}] ${voice.text}`)
+    }
+    return true
+  }
+
+  /** 写入语音点选会话（同一用户的新查询覆盖旧会话） */
+  _setVoiceSession(e, payload) {
+    // 会话积压兜底清理
+    if (this._voiceSessions.size > 500) {
+      const now = Date.now()
+      for (const [key, value] of this._voiceSessions) {
+        if (now > value.expiresAt) this._voiceSessions.delete(key)
+      }
+    }
+    this._voiceSessions.set(e.user_id, {
+      ...payload,
+      expiresAt: Date.now() + this._voiceTtlMs(),
+    })
+  }
+
+  /** 语音点选会话有效期（毫秒） */
+  _voiceTtlMs() {
+    const sec = Math.max(30, Math.min(1800, parseInt(this.config.voice_session_ttl) || 300))
+    return sec * 1000
+  }
+
+  /** 渲染语音列表卡片，返回 segment 或 null */
+  async _renderVoiceCard(data) {
+    if (!this.config.render_image || !puppeteer) return null
+    const { cardWidth, timeout } = renderSettings(this.config)
+    try {
+      return await puppeteer.screenshot('klbq-wiki', {
+        tplFile: VOICE_TEMPLATE,
+        saveId: 'voice_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+        imgType: 'jpeg',
+        quality: 88,
+        card_width: cardWidth,
+        ...data,
+        pageGotoParams: { timeout: timeout * 1000, waitUntil: 'networkidle2' },
+      })
+    } catch (err) {
+      logger.warn(`[KlbqWiki] 语音卡片渲染失败: ${err}`)
+      return null
+    }
+  }
+
+  /**
    * 公告查询
    * 用法：
    *   -公告        列出近期公告（带序号，序号 1 为最新）
@@ -1665,6 +1909,7 @@ export class KlbqWikiPlugin extends plugin {
       const ranges = {
         birthday_count: [1, 20],
         announcement_count: [5, 50],
+        voice_session_ttl: [30, 1800],
         grid_columns: [1, 4],
         card_width: [420, 1200],
         image_timeout: [1, 60],

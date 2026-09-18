@@ -62,8 +62,8 @@ const DEFAULT_CONFIG = {
   // 语音发送方式：false=适配器直接拉取远程 URL；true=先下载到临时目录再发送（发完即删）
   // 点选后日志显示已发送但群里看不到语音时，设为 true
   voice_send_local: false,
-  // 语音全量列表渲染为图片卡片（默认关闭：文字列表秒发；开启后每约 1.5 秒一张卡）
-  voice_list_image: false,
+  // 语音全量列表渲染为图片卡片（默认开启，卡片并行渲染提速；关闭则纯文字秒发）
+  voice_list_image: true,
   render_image: true,
   cat_language_image: false,
   // 默认关闭：单独发送 Wiki 链接可能触发其他插件（如 lin-plugin 复读只因）的 bug
@@ -116,7 +116,7 @@ function saveConfig(config) {
       voice_session_ttl: '# 【语音查询】点选会话有效期（秒，30-1800）',
       voice_cache_ttl: '# 【语音查询】语音文本本地缓存有效期（天，0 表示永不过期）',
       voice_send_local: '# 【语音查询】语音先下载再发送（适配器拉取远程失败时开启）',
-      voice_list_image: '# 【语音查询】全量列表渲染图片卡片（默认关闭，文字列表秒发）',
+      voice_list_image: '# 【语音查询】全量列表渲染图片卡片（默认开启，关闭则文字秒发）',
       render_image: '# 【功能开关】将查询结果渲染为图片卡片',
       cat_language_image: '# 【喵言喵语】使用图片发送',
       send_detail_link: '# 【详情链接】发送 Wiki 链接',
@@ -170,7 +170,7 @@ const CONFIG_META = {
   voice_session_ttl: { type: 'number',  group: '查询设置', label: '语音时效',   desc: '语音点选会话有效期（秒，30-1800）' },
   voice_cache_ttl:   { type: 'number',  group: '查询设置', label: '语音缓存',   desc: '语音文本本地缓存有效期（天，0 表示永不过期）' },
   voice_send_local:  { type: 'boolean', group: '查询设置', label: '语音本地下载', desc: '语音先下载到临时目录再发送（适配器拉取远程语音失败时开启）' },
-  voice_list_image:  { type: 'boolean', group: '查询设置', label: '语音列表图片', desc: '语音全量列表渲染为图片卡片（默认关闭，文字列表秒发）' },
+  voice_list_image:  { type: 'boolean', group: '查询设置', label: '语音列表图片', desc: '语音全量列表渲染为图片卡片（默认开启，关闭则文字秒发）' },
   restart_delay:     { type: 'number',  group: '插件更新', label: '重启延时',   desc: '自动重启前等待秒数（1-30，确保消息发送完成）' },
   grid_columns:      { type: 'number',  group: '图片布局', label: '列数',       desc: '图片卡片每行格子数（1-4）' },
   card_width:        { type: 'number',  group: '图片布局', label: '卡片宽度',   desc: '图片卡片最小宽度（420-1200 像素）' },
@@ -1319,21 +1319,19 @@ export class KlbqWikiPlugin extends plugin {
       },
     ]
 
-    // 渲染各"语言×分类"卡片（任一失败则整体回退文字，保证序号一致）
-    // 默认关闭：纯文字合并转发秒发；voice_list_image 开启后才逐张渲染
-    const useImage = !!this.config.voice_list_image && !!this.config.render_image && !!puppeteer
+    // 渲染各"语言×分类"卡片（并行渲染提速；任一失败则整体回退文字，保证序号一致）
+    // voice_list_image 关闭时直接走纯文字合并转发（秒发）
+    const useImage = this.config.voice_list_image !== false && !!this.config.render_image && !!puppeteer
     if (useImage) {
-      const images = []
-      for (const g of byLangCat) {
-        const img = await this._renderVoiceCard({
-          title: `${title}语音 · ${g.langName} · ${g.category}`,
-          kind: `第 ${g.voices[0].id}-${g.voices[g.voices.length - 1].id} 条 / 共 ${total} 条`,
-          // 卡片标题已含语言，行内不再重复显示语言标签（langName 仅关键词卡需要）
-          sections: [{ name: '', langCls: g.lang.toLowerCase(), rows: g.voices.map((v) => ({ id: v.id, scene: v.scene, text: v.text, lang: v.lang })) }],
-          tip: images.length === 0 ? tipText : '',
-        })
-        images.push(img)
-      }
+      const cards = byLangCat.map((g, gi) => ({
+        title: `${title}语音 · ${g.langName} · ${g.category}`,
+        kind: `第 ${g.voices[0].id}-${g.voices[g.voices.length - 1].id} 条 / 共 ${total} 条`,
+        // 卡片标题已含语言，行内不再重复显示语言标签（langName 仅关键词卡需要）
+        sections: [{ name: '', langCls: g.lang.toLowerCase(), rows: g.voices.map((v) => ({ id: v.id, scene: v.scene, text: v.text, lang: v.lang })) }],
+        tip: gi === 0 ? tipText : '',
+      }))
+      // 并行渲染（TRSS puppeteer 每次截图独立 newPage，支持并发）
+      const images = await this._renderVoiceCardsParallel(cards)
       if (images.every(Boolean)) {
         for (const img of images) {
           forwardMsg.push({ user_id: e.user_id || 10000, nickname, message: [img] })
@@ -1511,12 +1509,27 @@ export class KlbqWikiPlugin extends plugin {
         quality: 88,
         card_width: cardWidth,
         ...data,
-        pageGotoParams: { timeout: timeout * 1000, waitUntil: 'networkidle2' },
+        // 语音卡无外部资源（纯 HTML/CSS），用 load 而非 networkidle2，单卡渲染更快
+        pageGotoParams: { timeout: timeout * 1000, waitUntil: 'load' },
       })
     } catch (err) {
       logger.warn(`[KlbqWiki] 语音卡片渲染失败: ${err}`)
       return null
     }
+  }
+
+  /** 并行渲染多张语音卡片（限制并发数，避免瞬间开太多 chromium 页面） */
+  async _renderVoiceCardsParallel(cards, concurrency = 4) {
+    const results = new Array(cards.length)
+    let cursor = 0
+    const workers = Array.from({ length: Math.min(concurrency, cards.length) }, async () => {
+      while (cursor < cards.length) {
+        const idx = cursor++
+        results[idx] = await this._renderVoiceCard(cards[idx])
+      }
+    })
+    await Promise.all(workers)
+    return results
   }
 
   /**

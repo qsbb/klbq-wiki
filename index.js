@@ -80,7 +80,13 @@ const DEFAULT_CONFIG = {
 /** 加载配置 */
 function loadConfig() {
   try {
-    if (!fs.existsSync(CONFIG_FILE)) return { ...DEFAULT_CONFIG }
+    if (!fs.existsSync(CONFIG_FILE)) {
+      // 首次运行（或更新后）自动生成带注释的默认配置文件
+      // config/ 已加入 .gitignore，插件更新与强制更新均不会覆盖用户设置
+      const config = { ...DEFAULT_CONFIG }
+      saveConfig(config)
+      return config
+    }
     const text = fs.readFileSync(CONFIG_FILE, 'utf8')
     const parsed = YAML.parse(text) || {}
     return { ...DEFAULT_CONFIG, ...parsed }
@@ -2147,9 +2153,9 @@ export class KlbqWikiPlugin extends plugin {
 
       // 常见错误诊断
       let hint = ''
-      if (/local changes|would be overwritten|Your local changes/i.test(stderr)) {
+      if (/local changes|would be overwritten|Your local changes|本地修改|本地更改|本地改动|被合并操作覆盖|被检出操作覆盖/i.test(stderr)) {
         hint = '\n本地有改动冲突，可使用 -卡拉彼丘强制更新 丢弃本地改动后重试。'
-      } else if (/diverged|different histories|no common ancestor/i.test(stderr)) {
+      } else if (/diverged|different histories|no common ancestor|分支已分歧|没有共同祖先/i.test(stderr)) {
         hint = '\n本地分支与远程分歧，可使用 -卡拉彼丘强制更新 重置为远程版本。'
       } else if (/Permission denied|could not read username|Authentication failed/i.test(stderr)) {
         hint = '\n认证失败，请检查 git 凭据配置。'

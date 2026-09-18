@@ -8,7 +8,7 @@
 本插件移植自 [astrbot_plugin_klbq_wiki](https://github.com/qsbb/astrbot_plugin_klbq_wiki) v1.4.5，将原有的 AstrBot Python 实现完整改写为 Yunzai JavaScript 插件。
 
 - 插件名称：`klbq-wiki`
-- 当前版本：`1.14.1`
+- 当前版本：`1.14.2`
 - 作者：凌溪
 
 ## 功能特性
@@ -250,7 +250,7 @@ pnpm install cheerio
 
 ## 配置项
 
-配置文件位于 `plugins/klbq-wiki/config/config.yaml`，修改后重启 Yunzai 生效：
+配置文件位于 `plugins/klbq-wiki/config/config.yaml`（首次运行自动生成，已加入 .gitignore，插件更新/强制更新均不会覆盖你的设置），修改后重启 Yunzai 生效：
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |

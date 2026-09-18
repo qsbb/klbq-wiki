@@ -2069,8 +2069,10 @@ export class KlbqWikiPlugin extends plugin {
       return true
     }
 
+    // 强制更新不走 merge：直接 fetch 后硬重置到远端 main
+    // 本地改动/本地提交/分支分叉等任何脏状态都能自愈
     const cmd = force
-      ? 'git reset --hard HEAD && git clean -fd && git pull --ff-only'
+      ? 'git fetch origin && git reset --hard origin/main && git clean -fd'
       : 'git pull --ff-only'
 
     await e.reply(force ? '开始强制更新 klbq-wiki...' : '开始更新 klbq-wiki...')
@@ -2078,17 +2080,23 @@ export class KlbqWikiPlugin extends plugin {
 
     try {
       const { execSync } = await import('node:child_process')
-      const output = execSync(cmd, {
-        cwd: pluginDir,
-        encoding: 'utf8',
-        timeout: 60000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
+      const gitOpts = { cwd: pluginDir, encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] }
+      // 记录更新前提交，用于强制更新的结果判断与变更摘要
+      let beforeSha = ''
+      try {
+        beforeSha = execSync('git rev-parse HEAD', { ...gitOpts, stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+      } catch {}
+      const output = execSync(cmd, gitOpts)
       const text = (output || '').trim()
       logger.info(`[KlbqWiki] 更新输出: ${text}`)
 
-      // 判断是否有新提交
-      const isUpToDate = /Already up to date|已经是最新|up-to-date/i.test(text)
+      // 判断是否有新提交：普通更新看 git 输出，强制更新比较前后提交
+      let isUpToDate = /Already up to date|已经是最新|up-to-date/i.test(text)
+      let afterSha = beforeSha
+      try {
+        afterSha = execSync('git rev-parse HEAD', { ...gitOpts, stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+      } catch {}
+      if (force && beforeSha) isUpToDate = beforeSha === afterSha
       if (isUpToDate) {
         await e.reply('klbq-wiki 已是最新版本，无需更新。')
       } else {
@@ -2099,8 +2107,19 @@ export class KlbqWikiPlugin extends plugin {
           version = pkg.version || '未知'
         } catch {}
 
-        // 解析 git pull 输出，生成友好摘要
-        const summary = parseGitPullOutput(text)
+        // 解析 git 输出，生成友好摘要
+        // 强制更新的输出是 reset 结果而非 pull 日志，改用 diff --stat 生成摘要
+        let summaryText = text
+        if (force && beforeSha && afterSha && beforeSha !== afterSha) {
+          try {
+            summaryText = execSync(`git diff --stat ${beforeSha} ${afterSha}`, { ...gitOpts, timeout: 10000 })
+          } catch {}
+        }
+        const summary = parseGitPullOutput(summaryText)
+        if (force && summary && beforeSha && afterSha) {
+          summary.fromHash = beforeSha.slice(0, 7)
+          summary.toHash = afterSha.slice(0, 7)
+        }
         const lines = ['✅ klbq-wiki 更新成功！', `📦 当前版本：v${version}`]
 
         if (summary) {

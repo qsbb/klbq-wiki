@@ -8,7 +8,7 @@
 本插件移植自 [astrbot_plugin_klbq_wiki](https://github.com/qsbb/astrbot_plugin_klbq_wiki) v1.4.5，将原有的 AstrBot Python 实现完整改写为 Yunzai JavaScript 插件。
 
 - 插件名称：`klbq-wiki`
-- 当前版本：`1.14.2`
+- 当前版本：`1.14.3`
 - 作者：凌溪
 
 ## 功能特性

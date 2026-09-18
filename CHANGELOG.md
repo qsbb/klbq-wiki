@@ -1,5 +1,15 @@
 # 更新日志
 
+## 1.14.3
+
+### Bug 修复
+
+- **修复强制更新在部分本地状态下仍会失败的问题**
+  - 强制更新不再走 merge（`git reset --hard HEAD && git pull` 仍可能被本地索引状态卡住）
+  - 改为 `git fetch origin && git reset --hard origin/main && git clean -fd`，本地改动/本地提交/分支分叉等任何脏状态均可自愈
+  - `git clean` 在重置之后执行，`config/`（已 gitignore）下的用户配置与自定义别名不会被误删
+  - 强制更新现在也有与普通更新一致的版本号与变更文件摘要
+
 ## 1.14.2
 
 ### Bug 修复

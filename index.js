@@ -62,6 +62,8 @@ const DEFAULT_CONFIG = {
   // 语音发送方式：false=适配器直接拉取远程 URL；true=先下载到临时目录再发送（发完即删）
   // 点选后日志显示已发送但群里看不到语音时，设为 true
   voice_send_local: false,
+  // 语音全量列表渲染为图片卡片（默认关闭：文字列表秒发；开启后每约 1.5 秒一张卡）
+  voice_list_image: false,
   render_image: true,
   cat_language_image: false,
   // 默认关闭：单独发送 Wiki 链接可能触发其他插件（如 lin-plugin 复读只因）的 bug
@@ -114,6 +116,7 @@ function saveConfig(config) {
       voice_session_ttl: '# 【语音查询】点选会话有效期（秒，30-1800）',
       voice_cache_ttl: '# 【语音查询】语音文本本地缓存有效期（天，0 表示永不过期）',
       voice_send_local: '# 【语音查询】语音先下载再发送（适配器拉取远程失败时开启）',
+      voice_list_image: '# 【语音查询】全量列表渲染图片卡片（默认关闭，文字列表秒发）',
       render_image: '# 【功能开关】将查询结果渲染为图片卡片',
       cat_language_image: '# 【喵言喵语】使用图片发送',
       send_detail_link: '# 【详情链接】发送 Wiki 链接',
@@ -167,6 +170,7 @@ const CONFIG_META = {
   voice_session_ttl: { type: 'number',  group: '查询设置', label: '语音时效',   desc: '语音点选会话有效期（秒，30-1800）' },
   voice_cache_ttl:   { type: 'number',  group: '查询设置', label: '语音缓存',   desc: '语音文本本地缓存有效期（天，0 表示永不过期）' },
   voice_send_local:  { type: 'boolean', group: '查询设置', label: '语音本地下载', desc: '语音先下载到临时目录再发送（适配器拉取远程语音失败时开启）' },
+  voice_list_image:  { type: 'boolean', group: '查询设置', label: '语音列表图片', desc: '语音全量列表渲染为图片卡片（默认关闭，文字列表秒发）' },
   restart_delay:     { type: 'number',  group: '插件更新', label: '重启延时',   desc: '自动重启前等待秒数（1-30，确保消息发送完成）' },
   grid_columns:      { type: 'number',  group: '图片布局', label: '列数',       desc: '图片卡片每行格子数（1-4）' },
   card_width:        { type: 'number',  group: '图片布局', label: '卡片宽度',   desc: '图片卡片最小宽度（420-1200 像素）' },
@@ -1316,7 +1320,8 @@ export class KlbqWikiPlugin extends plugin {
     ]
 
     // 渲染各"语言×分类"卡片（任一失败则整体回退文字，保证序号一致）
-    const useImage = !!this.config.render_image && !!puppeteer
+    // 默认关闭：纯文字合并转发秒发；voice_list_image 开启后才逐张渲染
+    const useImage = !!this.config.voice_list_image && !!this.config.render_image && !!puppeteer
     if (useImage) {
       const images = []
       for (const g of byLangCat) {

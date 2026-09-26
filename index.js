@@ -181,6 +181,7 @@ const CONFIG_META = {
   image_timeout:     { type: 'number',  group: '图片布局', label: '渲染超时',   desc: '图片渲染超时时间（1-60 秒）' },
   image_cache:       { type: 'boolean', group: '图片布局', label: '图片缓存',   desc: '将查询过的角色立绘、皮肤图缓存到本地，避免重复下载' },
   image_cache_ttl:   { type: 'number',  group: '图片布局', label: '缓存有效期', desc: '图片缓存有效期（天，0 表示永不过期）' },
+  custom_aliases:    { type: 'string',  group: '查询设置', label: '旧版别名',   desc: '每行一条：别名=页面标题（新版建议使用 config/aliases.yaml）' },
 }
 
 /** 读取渲染设置 */

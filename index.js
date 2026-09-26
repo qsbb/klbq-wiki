@@ -64,6 +64,8 @@ const DEFAULT_CONFIG = {
   voice_send_local: false,
   // 语音全量列表渲染为图片卡片（默认开启，卡片并行渲染提速；关闭则纯文字秒发）
   voice_list_image: true,
+  // 语音卡片 JPEG 质量（40-95）。文本列表用 70 已清晰，质量越低上传越快
+  voice_card_quality: 70,
   render_image: true,
   cat_language_image: false,
   // 默认关闭：单独发送 Wiki 链接可能触发其他插件（如 lin-plugin 复读只因）的 bug
@@ -117,6 +119,7 @@ function saveConfig(config) {
       voice_cache_ttl: '# 【语音查询】语音文本本地缓存有效期（天，0 表示永不过期）',
       voice_send_local: '# 【语音查询】语音先下载再发送（适配器拉取远程失败时开启）',
       voice_list_image: '# 【语音查询】全量列表渲染图片卡片（默认开启，关闭则文字秒发）',
+      voice_card_quality: '# 【语音查询】语音卡片 JPEG 质量（40-95，越小上传越快）',
       render_image: '# 【功能开关】将查询结果渲染为图片卡片',
       cat_language_image: '# 【喵言喵语】使用图片发送',
       send_detail_link: '# 【详情链接】发送 Wiki 链接',
@@ -171,6 +174,7 @@ const CONFIG_META = {
   voice_cache_ttl:   { type: 'number',  group: '查询设置', label: '语音缓存',   desc: '语音文本本地缓存有效期（天，0 表示永不过期）' },
   voice_send_local:  { type: 'boolean', group: '查询设置', label: '语音本地下载', desc: '语音先下载到临时目录再发送（适配器拉取远程语音失败时开启）' },
   voice_list_image:  { type: 'boolean', group: '查询设置', label: '语音列表图片', desc: '语音全量列表渲染为图片卡片（默认开启，关闭则文字秒发）' },
+  voice_card_quality: { type: 'number',  group: '图片布局', label: '语音卡质量', desc: '语音卡片 JPEG 质量（40-95，越小上传越快）' },
   restart_delay:     { type: 'number',  group: '插件更新', label: '重启延时',   desc: '自动重启前等待秒数（1-30，确保消息发送完成）' },
   grid_columns:      { type: 'number',  group: '图片布局', label: '列数',       desc: '图片卡片每行格子数（1-4）' },
   card_width:        { type: 'number',  group: '图片布局', label: '卡片宽度',   desc: '图片卡片最小宽度（420-1200 像素）' },
@@ -1498,6 +1502,12 @@ export class KlbqWikiPlugin extends plugin {
   }
 
   /** 渲染语音列表卡片，返回 segment 或 null */
+  /** 语音卡片 JPEG 质量（越小体积越小、上传越快；文本列表 70 已清晰） */
+  _voiceCardQuality() {
+    const q = parseInt(this.config.voice_card_quality)
+    return Number.isFinite(q) ? Math.max(40, Math.min(95, q)) : 70
+  }
+
   async _renderVoiceCard(data) {
     if (!this.config.render_image || !puppeteer) return null
     const { cardWidth, timeout } = renderSettings(this.config)
@@ -1506,7 +1516,7 @@ export class KlbqWikiPlugin extends plugin {
         tplFile: VOICE_TEMPLATE,
         saveId: 'voice_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
         imgType: 'jpeg',
-        quality: 88,
+        quality: this._voiceCardQuality(),
         card_width: cardWidth,
         ...data,
         // 语音卡无外部资源（纯 HTML/CSS），用 load 而非 networkidle2，单卡渲染更快
@@ -2022,6 +2032,7 @@ export class KlbqWikiPlugin extends plugin {
         announcement_count: [5, 50],
         voice_session_ttl: [30, 1800],
         voice_cache_ttl: [0, 365],
+        voice_card_quality: [40, 95],
         grid_columns: [1, 4],
         card_width: [420, 1200],
         image_timeout: [1, 60],

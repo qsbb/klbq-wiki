@@ -8,7 +8,7 @@
 本插件移植自 [astrbot_plugin_klbq_wiki](https://github.com/qsbb/astrbot_plugin_klbq_wiki) v1.4.5，将原有的 AstrBot Python 实现完整改写为 Yunzai JavaScript 插件。
 
 - 插件名称：`klbq-wiki`
-- 当前版本：`1.14.7`
+- 当前版本：`1.14.8`
 - 作者：凌溪
 
 ## 功能特性
@@ -260,6 +260,7 @@ pnpm install cheerio
 | `voice_cache_ttl` | 整数 | `7` | 语音文本本地缓存有效期（天），0 表示永不过期，范围 0–365 |
 | `voice_send_local` | 布尔 | `false` | 语音先下载到临时目录再发送（适配器拉取远程语音失败时开启） |
 | `voice_list_image` | 布尔 | `true` | 语音全量列表渲染为图片卡片（默认开启，并行渲染提速；关闭则纯文字秒发） |
+| `voice_card_quality` | 整数 | `70` | 语音卡片 JPEG 质量（40-95，越小体积越小、上传越快） |
 | `not_found_reply` | 布尔 | `true` | 查询不到条目时是否回复提示，关闭后静默忽略 |
 | `render_image` | 布尔 | `true` | 是否将查询结果优先渲染为图片卡片 |
 | `cat_language_image` | 布尔 | `false` | 是否将喵言喵语渲染为图片，关闭时原样发送文字 |

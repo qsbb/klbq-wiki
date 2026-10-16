@@ -38,6 +38,7 @@ const PLUGIN_NAME = 'klbq-wiki'
 const CONFIG_DIR = `./plugins/${PLUGIN_NAME}/config`
 const CONFIG_FILE = `${CONFIG_DIR}/config.yaml`
 const CARD_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/card.html`
+const CARD_ROLE_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/card-role.html`
 const HELP_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/help.html`
 const BIRTHDAY_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/birthday.html`
 const CALENDAR_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/calendar.html`
@@ -518,7 +519,7 @@ export class KlbqWikiPlugin extends plugin {
   }
 
   /** 渲染图片卡片，返回 segment 对象或 false */
-  async renderImage(title, kind, items, thumb, tip) {
+  async renderImage(title, kind, items, thumb, tip, tplFile = CARD_TEMPLATE) {
     const { columns, cardWidth, timeout } = renderSettings(this.config)
     try {
       // art-template 的 {{}} 默认会 HTML 转义，无需手动 escapeHtml
@@ -530,7 +531,7 @@ export class KlbqWikiPlugin extends plugin {
       // 注意：Yunzai 的 puppeteer.screenshot 已返回 segment 对象，
       // 无需再用 segment.image() 包装，直接返回即可
       return await puppeteer.screenshot('klbq-wiki', {
-        tplFile: CARD_TEMPLATE,
+        tplFile,
         saveId,
         imgType: 'jpeg',
         quality: 88,
@@ -595,7 +596,8 @@ export class KlbqWikiPlugin extends plugin {
     const renderImage = !!this.config.render_image
 
     if (renderImage && puppeteer) {
-      const img = await this.renderImage(title, kind, finalItems, thumb, tip)
+      const tplFile = isWeapon ? CARD_TEMPLATE : CARD_ROLE_TEMPLATE
+      const img = await this.renderImage(title, kind, finalItems, thumb, tip, tplFile)
       if (img) {
         // puppeteer.screenshot 已返回 segment 对象，直接发送
         await e.reply(img)

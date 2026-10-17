@@ -45,7 +45,10 @@ const item=l=>D.items.find(i=>i.label===l);
 const heroImg=document.querySelector('.hero img');
 if(D.bounds){
   heroImg.style.setProperty('--cx',D.bounds.cx);
-  heroImg.style.setProperty('--cy',D.bounds.cy);
+  // cy>0.5 时衰减排版偏移，让截断腿自然沉底
+  const rawCy=D.bounds.cy;
+  const effCy=rawCy>0.5?0.5+(rawCy-0.5)*0.3:rawCy;
+  heroImg.style.setProperty('--cy',effCy);
   // 横版图：右侧竖窗 + 以主体横向中心为焦点
   const ratio=(D.bounds.w&&D.bounds.h)?D.bounds.w/D.bounds.h:1;
   if(ratio>1.29){

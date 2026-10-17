@@ -519,7 +519,7 @@ export class KlbqWikiPlugin extends plugin {
   }
 
   /** 渲染图片卡片，返回 segment 对象或 false */
-  async renderImage(title, kind, items, thumb, tip, tplFile = CARD_TEMPLATE) {
+  async renderImage(title, kind, items, thumb, tip, tplFile = CARD_TEMPLATE, bounds = null) {
     const { columns, cardWidth, timeout } = renderSettings(this.config)
     try {
       // art-template 的 {{}} 默认会 HTML 转义，无需手动 escapeHtml
@@ -542,6 +542,7 @@ export class KlbqWikiPlugin extends plugin {
         // 否则 <img src="d:\..."> 在 about:blank 基础下无法解析
         thumb: toFileUrl(thumb) || '',
         tip: tip || '',
+        bounds,
         grid_columns: actualColumns,
         card_width: cardWidth,
         pageGotoParams: {
@@ -582,7 +583,7 @@ export class KlbqWikiPlugin extends plugin {
   }
 
   /** 发送查询结果 */
-  async sendResult(e, title, pageUrl, fields, thumb = '') {
+  async sendResult(e, title, pageUrl, fields, thumb = '', bounds = null) {
     const isWeapon = this.wiki.isWeapon(fields, title)
     const items = this.wiki.itemsForOutput(fields, isWeapon)
     const finalItems = items.length ? items : [{ label: '简介', value: '暂无可提取的结构化信息。' }]
@@ -597,7 +598,7 @@ export class KlbqWikiPlugin extends plugin {
 
     if (renderImage && puppeteer) {
       const tplFile = isWeapon ? CARD_TEMPLATE : CARD_ROLE_TEMPLATE
-      const img = await this.renderImage(title, kind, finalItems, thumb, tip, tplFile)
+      const img = await this.renderImage(title, kind, finalItems, thumb, tip, tplFile, bounds)
       if (img) {
         // puppeteer.screenshot 已返回 segment 对象，直接发送
         await e.reply(img)
@@ -649,8 +650,9 @@ export class KlbqWikiPlugin extends plugin {
 
     const fallbackThumb = page.thumbnail?.source || ''
     const thumb = await this.wiki.enhanceThumb(title, html || '', fields, fallbackThumb)
+    const bounds = thumb ? await this.wiki._imageBounds(thumb).catch(() => null) : null
 
-    return await this.sendResult(e, title, pageUrl, fields, thumb)
+    return await this.sendResult(e, title, pageUrl, fields, thumb, bounds)
   }
 
   /** 地图一览：按模式显示地图名称与图片块 */

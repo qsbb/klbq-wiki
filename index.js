@@ -530,6 +530,12 @@ export class KlbqWikiPlugin extends plugin {
       const saveId = 'card_' + Date.now()
       // 注意：Yunzai 的 puppeteer.screenshot 已返回 segment 对象，
       // 无需再用 segment.image() 包装，直接返回即可
+      // 角色卡模板用 DATA_JSON 传完整数据（含 bounds），武器卡用传统变量
+      const DATA_JSON = JSON.stringify({
+        title, kind, items, tip: tip || '',
+        thumb: toFileUrl(thumb) || '',
+        bounds: bounds || null,
+      })
       return await puppeteer.screenshot('klbq-wiki', {
         tplFile,
         saveId,
@@ -538,6 +544,7 @@ export class KlbqWikiPlugin extends plugin {
         title,
         kind,
         items,
+        DATA_JSON,
         // puppeteer 用 page.setContent 加载 HTML，本地路径必须转成 file:// URL
         // 否则 <img src="d:\..."> 在 about:blank 基础下无法解析
         thumb: toFileUrl(thumb) || '',

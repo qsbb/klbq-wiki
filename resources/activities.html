@@ -3,80 +3,44 @@
 <head>
 <meta charset="utf-8">
 <style>
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; width: 100%; min-width: 0; min-height: 0; background: #10182f; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; overflow: hidden; }
-body { display: block; }
-.klbq-card { width: 100%; min-width: {{card_width}}px; position: relative; overflow: hidden; padding: 34px; color: #edf7ff; background: linear-gradient(135deg, #10182f 0%, #182a55 48%, #5d3ca0 100%); }
-.glow { position: absolute; right: -100px; top: -120px; width: 360px; height: 360px; border-radius: 50%; background: radial-gradient(circle, rgba(118, 221, 255, .48), rgba(118, 221, 255, 0) 68%); pointer-events: none; }
-.glow2 { position: absolute; left: -80px; bottom: -100px; width: 280px; height: 280px; border-radius: 50%; background: radial-gradient(circle, rgba(255, 200, 120, .35), rgba(255, 200, 120, 0) 70%); pointer-events: none; }
-.header { position: relative; display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 22px; }
-.tag { display: inline-block; padding: 7px 14px; border-radius: 999px; background: rgba(255, 255, 255, .14); color: #aee9ff; font-size: 20px; letter-spacing: 1px; }
-.title { margin-top: 12px; font-size: 42px; font-weight: 800; text-shadow: 0 4px 16px rgba(0, 0, 0, .28); }
-.subtitle { margin-top: 8px; color: #c6d5ff; font-size: 20px; }
-.updated { color: rgba(237, 247, 255, .62); font-size: 16px; text-align: right; }
-.activity-grid { position: relative; display: grid; grid-template-columns: {{grid_columns}}; gap: 14px; }
-.activity { position: relative; margin-bottom: 0; padding: 16px; border-radius: 18px; background: rgba(255, 255, 255, .10); border: 1px solid rgba(255, 255, 255, .12); overflow: hidden; }
-.activity.single { margin-bottom: 18px; padding: 18px; }
-.activity-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-.activity-type { flex-shrink: 0; min-width: 56px; text-align: center; padding: 6px 10px; border-radius: 10px; font-size: 16px; font-weight: 700; letter-spacing: 1px; }
-.activity-type.type-season { background: rgba(255, 110, 110, .22); color: #ffb3b3; border: 1px solid rgba(255, 110, 110, .42); }
-.activity-type.type-activity { background: rgba(118, 221, 255, .22); color: #aee9ff; border: 1px solid rgba(118, 221, 255, .42); }
-.activity-type.type-pool { background: rgba(255, 200, 120, .22); color: #ffe89a; border: 1px solid rgba(255, 200, 120, .42); }
-.activity-type.type-other { background: rgba(180, 180, 200, .18); color: #c6d5ff; border: 1px solid rgba(180, 180, 200, .32); }
-.activity-title { flex: 1; min-width: 0; font-size: 24px; font-weight: 700; color: #ffffff; word-break: break-all; overflow-wrap: anywhere; }
-.activity-cover { width: 100%; max-height: 360px; object-fit: contain; border-radius: 14px; background: rgba(7, 14, 35, .35); margin-bottom: 12px; }
-.activity.compact .activity-cover { max-height: 200px; }
-.activity.compact .activity-title { font-size: 20px; }
-.activity.compact .activity-meta { font-size: 16px; gap: 6px 12px; }
-.activity.compact .activity-type { min-width: 44px; padding: 4px 8px; font-size: 14px; }
-.activity-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: #c6d5ff; font-size: 18px; }
-.activity-meta span { white-space: nowrap; }
-.activity-meta .status { color: #fff2a8; font-weight: 700; }
-.activity-progress { width: 100%; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .12); margin-top: 10px; overflow: hidden; }
-.activity-progress-bar { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #76ddff, #b69cff); }
-.activity-progress-bar.urgent { background: linear-gradient(90deg, #ffb38a, #ff6a6a); }
-.footer { position: relative; margin-top: 22px; color: rgba(237, 247, 255, .62); font-size: 16px; text-align: right; }
-.empty { text-align: center; padding: 40px 20px; color: #c6d5ff; font-size: 22px; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:{{card_width}}px;background:#121214;font-family:"PingFang SC","Microsoft YaHei",sans-serif}
+.card{border-radius:16px;overflow:hidden;background:#1a1a1e}
+.masthead{padding:28px 28px 20px;border-bottom:1px solid #26262a;display:flex;justify-content:space-between;align-items:flex-end}
+.masthead-left .brand{font-size:10px;letter-spacing:5px;color:#555;font-weight:600;margin-bottom:10px}
+.masthead-left .title{font-size:42px;font-weight:900;color:#e4e4e8;line-height:1.1}
+.masthead-left .subtitle{color:#777;font-size:14px;margin-top:6px}
+.updated{color:#444;font-size:11px;text-align:right;flex-shrink:0}
+.body{padding:20px 28px}
+.activity-grid{display:grid;grid-template-columns:{{grid_columns}};gap:10px}
+.activity{padding:14px;border-radius:10px;background:#1e1e22;border:1px solid #26262a}
+.activity.single{margin-bottom:10px}
+.activity-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.activity-type{flex-shrink:0;min-width:44px;text-align:center;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700}
+.activity-type.type-season{background:rgba(255,110,110,.12);color:#ff8a8a}
+.activity-type.type-activity{background:rgba(74,158,255,.12);color:#4a9eff}
+.activity-type.type-pool{background:rgba(255,200,120,.12);color:#e8c05a}
+.activity-type.type-other{background:rgba(150,150,170,.1);color:#888}
+.activity-title{flex:1;min-width:0;font-size:15px;font-weight:700;color:#ddd}
+.activity-cover{width:100%;max-height:280px;object-fit:contain;border-radius:8px;background:#141416;margin-bottom:8px}
+.activity.compact .activity-cover{max-height:160px}
+.activity-meta{display:flex;flex-wrap:wrap;gap:4px 12px;color:#777;font-size:12px}
+.activity-meta .status{color:#e8c05a;font-weight:700}
+.activity-progress{width:100%;height:4px;border-radius:2px;background:#26262a;margin-top:8px;overflow:hidden}
+.activity-progress-bar{height:100%;border-radius:2px;background:#4a9eff}
+.activity-progress-bar.urgent{background:#ff6a6a}
+.footer{padding:0 28px 14px;text-align:right;color:#333;font-size:10px}
+.empty{text-align:center;padding:40px 20px;color:#555;font-size:14px}
 </style>
 </head>
 <body>
-<div id="container" class="klbq-card">
-  <div class="glow"></div>
-  <div class="glow2"></div>
-  <div class="header">
-    <div>
-      <div class="tag">卡拉彼丘 Wiki</div>
-      <div class="title">{{title}}</div>
-      <div class="subtitle">{{kind}}</div>
-    </div>
-    <div class="updated">更新时间：{{updated}}</div>
-  </div>
-
+<div class="card">
+  <div class="masthead"><div class="masthead-left"><div class="brand">KALABIYAU WIKI</div><div class="title">{{title}}</div><div class="subtitle">{{kind}}</div></div><div class="updated">更新：{{updated}}</div></div>
+  <div class="body">
   {{if activities.length}}
-  <div class="activity-grid">
-  {{each activities}}
-  <div class="activity{{$value.compact ? ' compact' : ''}}{{$value.single ? ' single' : ''}}">
-    <div class="activity-head">
-      <div class="activity-type type-{{$value.typeClass}}">{{$value.typeLabel}}</div>
-      <div class="activity-title">{{$value.title}}</div>
-    </div>
-    {{if $value.image}}<img class="activity-cover" src="{{$value.image}}" alt="{{$value.title}}" />{{/if}}
-    <div class="activity-meta">
-      <span class="status">{{$value.status}}</span>
-      {{if $value.start}}<span>起 {{$value.start}}</span>{{/if}}
-      <span>止 {{$value.end}}</span>
-      {{if $value.daysTotal > 0}}<span>为期 {{$value.daysTotal}} 天</span>{{/if}}
-    </div>
-    <div class="activity-progress">
-      <div class="activity-progress-bar{{$value.urgent ? ' urgent' : ''}}" style="width: {{$value.progress}}%"></div>
-    </div>
+  <div class="activity-grid">{{each activities}}<div class="activity{{$value.compact ? ' compact' : ''}}{{$value.single ? ' single' : ''}}"><div class="activity-head"><div class="activity-type type-{{$value.typeClass}}">{{$value.typeLabel}}</div><div class="activity-title">{{$value.title}}</div></div>{{if $value.image}}<img class="activity-cover" src="{{$value.image}}" alt="{{$value.title}}" />{{/if}}<div class="activity-meta"><span class="status">{{$value.status}}</span>{{if $value.start}}<span>起 {{$value.start}}</span>{{/if}}<span>止 {{$value.end}}</span>{{if $value.daysTotal > 0}}<span>为期 {{$value.daysTotal}} 天</span>{{/if}}</div><div class="activity-progress"><div class="activity-progress-bar{{$value.urgent ? ' urgent' : ''}}" style="width: {{$value.progress}}%"></div></div></div>{{/each}}</div>
+  {{else}}<div class="empty">当前没有正在进行的活动</div>{{/if}}
   </div>
-  {{/each}}
-  </div>
-  {{else}}
-  <div class="empty">当前没有正在进行的活动</div>
-  {{/if}}
-
   <div class="footer">数据来源：wiki.biligame.com/klbq · Generated by klbq-wiki</div>
 </div>
 </body>

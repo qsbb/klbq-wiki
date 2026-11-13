@@ -22,6 +22,17 @@ import { WikiClient, escapeHtml, unescapeHtml, cleanText } from './lib/wiki.js'
 import { buildAliasMap, ROLE_FIELDS, WEAPON_FIELDS } from './lib/aliases.js'
 import { ImageCache, toFileUrl } from './lib/image-cache.js'
 import { isPlausibleQuery } from './lib/query-guard.js'
+import {
+  DakanuClient,
+  StatsError,
+  buildCareerCard,
+  buildMatchesCard,
+  buildRelationsCard,
+  buildRankingCard,
+  tierLabel,
+  formatNumber,
+  formatPercent,
+} from './lib/stats.js'
 
 // puppeteer 渲染器：Yunzai 内置的全局渲染器
 let puppeteer = null
@@ -35,6 +46,32 @@ try {
 const segment = global.segment || (await import('../../lib/segment/onebot11.js')).default
 
 const PLUGIN_NAME = 'klbq-wiki'
+/** 战绩查询的视图关键词 → 内部视图名 */
+const STATS_VIEW_ALIAS = {
+  生涯: 'career',
+  资料: 'career',
+  战绩: 'career',
+  对局: 'matches',
+  比赛: 'matches',
+  搭档: 'teammate',
+  队友: 'teammate',
+  对手: 'rival',
+  敌人: 'rival',
+}
+
+/**
+ * 排行榜关键词 → 榜单类型编号
+ *
+ * 站点给自己的榜单起名「极限推进榜」「晶源感染榜」，玩家嘴上说的是「推车」「生化」，
+ * 这里做一层口语映射；label 本身仍会参与匹配，所以正式名也照样能用。
+ */
+const RANKING_KEYWORDS = {
+  1: ['段位', '排位', '星星', 'stars'],
+  2: ['团队', '乱斗', '团竞', 'team'],
+  6: ['推车', '推进', 'pushcar', 'push'],
+  7: ['挑战', '休闲', '训练', 'leisure'],
+  8: ['生化', '晶源', '感染', 'zombie'],
+}
 const CONFIG_DIR = `./plugins/${PLUGIN_NAME}/config`
 const CONFIG_FILE = `${CONFIG_DIR}/config.yaml`
 const CARD_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/card.html`
@@ -50,6 +87,11 @@ const AWAKEN_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/awaken.html`
 const ANNOUNCEMENT_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/announcement.html`
 const VOICE_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/voice.html`
 const VOICE_SESSION_FILE = `./plugins/${PLUGIN_NAME}/data/voice-sessions.json`
+// 战绩查询卡片（数据源 dakanu.com）
+const STATS_CAREER_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/stats-career.html`
+const STATS_MATCHES_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/stats-matches.html`
+const STATS_RANKING_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/stats-ranking.html`
+const STATS_RELATIONS_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/stats-relations.html`
 
 /** 默认配置 */
 const DEFAULT_CONFIG = {
@@ -87,6 +129,21 @@ const DEFAULT_CONFIG = {
   // 自动重启前等待秒数（确保消息发送完成）
   restart_delay: 3,
   custom_aliases: '',
+  // ── 战绩查询（数据源 dakanu.com）──
+  // 总开关：关闭后 -战绩 / -排行 不响应
+  stats_enabled: true,
+  // 站点地址（自建或反代时改这里）
+  stats_base_url: 'https://www.dakanu.com',
+  // 单次请求超时（秒）。站点 summoner 接口实测 2~3 秒，留足余量
+  stats_timeout: 25,
+  // 玩家数据缓存（秒）。重复查询同一玩家时直接吃缓存，避免反复打站方
+  stats_cache_ttl: 300,
+  // 最近对局每卡显示条数（1-20）
+  stats_match_limit: 10,
+  // 排行榜每卡显示条数（1-50）
+  stats_ranking_size: 20,
+  // 对同一站点的并发上限（1-5），压低可减少对站方的压力
+  stats_concurrency: 3,
 }
 
 /** 加载配置 */
@@ -134,6 +191,13 @@ function saveConfig(config) {
       auto_restart: '# 【插件更新】更新成功后自动重启 Yunzai（需 PM2 等进程管理器）',
       restart_delay: '# 【插件更新】自动重启前等待秒数（1-30，确保消息发送完成）',
       custom_aliases: '# 【别名】自定义别名映射，每行一条，格式：别名=页面标题',
+      stats_enabled: '# 【战绩查询】总开关，关闭后 -战绩 / -排行 不响应',
+      stats_base_url: '# 【战绩查询】站点地址（dakanu.com 或自建反代地址）',
+      stats_timeout: '# 【战绩查询】单次请求超时（秒，5-60）',
+      stats_cache_ttl: '# 【战绩查询】玩家数据缓存时长（秒，0 表示不缓存）',
+      stats_match_limit: '# 【战绩查询】最近对局每卡显示条数（1-20）',
+      stats_ranking_size: '# 【战绩查询】排行榜每卡显示条数（1-50）',
+      stats_concurrency: '# 【战绩查询】对站点的并发上限（1-5）',
     }
     for (const [key, value] of Object.entries(DEFAULT_CONFIG)) {
       if (descriptions[key]) lines.push(descriptions[key])
@@ -183,6 +247,13 @@ const CONFIG_META = {
   image_cache:       { type: 'boolean', group: '图片布局', label: '图片缓存',   desc: '将查询过的角色立绘、皮肤图缓存到本地，避免重复下载' },
   image_cache_ttl:   { type: 'number',  group: '图片布局', label: '缓存有效期', desc: '图片缓存有效期（天，0 表示永不过期）' },
   custom_aliases:    { type: 'string',  group: '查询设置', label: '旧版别名',   desc: '每行一条：别名=页面标题（新版建议使用 config/aliases.yaml）' },
+  stats_enabled:     { type: 'boolean', group: '战绩查询', label: '战绩查询',   desc: '开启 -战绩 / -排行 战绩查询（数据源 dakanu.com）' },
+  stats_base_url:    { type: 'string',  group: '战绩查询', label: '站点地址',   desc: '战绩数据站点，默认 https://www.dakanu.com' },
+  stats_timeout:     { type: 'number',  group: '战绩查询', label: '请求超时',   desc: '单次请求超时秒数（5-60）' },
+  stats_cache_ttl:   { type: 'number',  group: '战绩查询', label: '数据缓存',   desc: '玩家数据缓存秒数（0 表示不缓存）' },
+  stats_match_limit: { type: 'number',  group: '战绩查询', label: '对局条数',   desc: '最近对局每卡显示条数（1-20）' },
+  stats_ranking_size:{ type: 'number',  group: '战绩查询', label: '排行条数',   desc: '排行榜每卡显示条数（1-50）' },
+  stats_concurrency: { type: 'number',  group: '战绩查询', label: '并发上限',   desc: '对站点的并发请求上限（1-5）' },
 }
 
 /** 读取渲染设置 */
@@ -296,6 +367,16 @@ function helpData() {
       ],
     },
     {
+      name: '战绩查询',
+      items: [
+        { name: '-战绩 Maker寒冬', desc: '查生涯卡：段位、胜率、KDA、常用角色' },
+        { name: '-战绩 Maker寒冬 对局', desc: '查最近对局（胜负、比分、K/D/A）' },
+        { name: '-战绩 Maker寒冬 搭档', desc: '查同队玩家胜率' },
+        { name: '-战绩 Maker寒冬 对手', desc: '查交手玩家胜率' },
+        { name: '-排行 段位榜', desc: '查排行榜，可选段位/团队/推车/挑战/生化' },
+      ],
+    },
+    {
       name: '插件管理（仅主人）',
       items: [
         { name: '-卡拉彼丘更新', desc: '拉取插件最新版本（默认自动重启）' },
@@ -353,6 +434,18 @@ export class KlbqWikiPlugin extends plugin {
     this._voiceSessions = new Map()
     // 从磁盘恢复未过期的会话（插件热重载/重启后点选仍有效）
     this._loadVoiceSessions()
+    // 战绩查询客户端（数据源 dakanu.com）
+    this._reloadStatsClient()
+  }
+
+  /** 按当前配置重建战绩客户端（改了 stats_* 配置项后调用） */
+  _reloadStatsClient() {
+    this.stats = new DakanuClient({
+      baseUrl: this.config.stats_base_url,
+      timeout: (parseInt(this.config.stats_timeout) || 25) * 1000,
+      cacheTtl: parseInt(this.config.stats_cache_ttl) || 0,
+      concurrency: parseInt(this.config.stats_concurrency) || 3,
+    })
   }
 
   /** 主命令入口 */
@@ -394,6 +487,12 @@ export class KlbqWikiPlugin extends plugin {
     { reg: /^(?:公告|公告资讯)(?:\s*(\d+))?$/, fn: (self, e, m) => self.handleAnnouncements(e, m[1]) },
     // 地图一览：按模式分组显示各模式的地图
     { reg: /^(地图|地图一览|全部地图|地图列表)$/, fn: (self, e) => self.handleMapList(e) },
+    // 战绩：-战绩 昵称 [对局|搭档|对手]，或 -昵称 战绩（须放在皮肤规则之前，否则会被"角色 皮肤"规则吃掉）
+    // 命令词后必须是空白或结尾，避免把「战绩狂人」这类昵称拆成「战绩 + 狂人」
+    { reg: /^(?:查战绩|查询战绩|战绩)(?:\s+(.*))?$/, fn: (self, e, m) => self.handleStats(e, (m[1] || '').trim()) },
+    { reg: /^(.+?)\s*战绩$/, fn: (self, e, m) => self.handleStats(e, m[1].trim()) },
+    // 排行榜：-排行 [段位|团队|推车|挑战|生化]，默认段位榜
+    { reg: /^(?:排行榜|排行|榜单)(?:\s+(.*))?$/, fn: (self, e, m) => self.handleRanking(e, (m[1] || '').trim()) },
     // 角色技能：支持角色别名，如 -心夏技能、-奶妈技能
     { reg: /^(.+?)技能$/, fn: (self, e, m) => self.handleRoleSkills(e, m[1]) },
     // 角色觉醒：支持角色别名，如 -心夏觉醒、-奶妈觉醒（捕获组 trim 兼容"心夏 觉醒"写法）
@@ -746,6 +845,342 @@ export class KlbqWikiPlugin extends plugin {
     await e.reply(lines.join('\n'))
     for (const image of images.slice(0, 4)) await e.reply(segment.image(image))
     return true
+  }
+
+  // ── 战绩查询（数据源 dakanu.com）──────────────────────────────
+
+  /**
+   * 战绩查询入口
+   *
+   * 支持三种写法：
+   *   -战绩 Maker寒冬            生涯卡
+   *   -战绩 Maker寒冬 对局       最近对局
+   *   -战绩 Maker寒冬 搭档       同队统计
+   *   -战绩 Maker寒冬 对手       交手统计
+   *   -Maker寒冬 战绩            同上（关键词在后）
+   *
+   * @param {string} arg 关键词之后的内容
+   */
+  async handleStats(e, arg) {
+    if (this.config.stats_enabled === false) return false
+
+    const raw = String(arg || '').trim()
+    if (!raw) {
+      return await this.sendTextCard(
+        e,
+        '战绩查询',
+        [
+          '用法：-战绩 <昵称或 UID> [对局|搭档|对手]',
+          '',
+          '例：',
+          '-战绩 Maker寒冬          生涯卡',
+          '-战绩 Maker寒冬 对局     最近对局',
+          '-战绩 Maker寒冬 搭档     同队玩家胜率',
+          '-战绩 Maker寒冬 对手     交手玩家胜率',
+          '',
+          '也可以把关键词放后面：-Maker寒冬 战绩',
+          '数据源：dakanu.com（第三方站点，非官方数据）',
+        ].join('\n'),
+        '用法'
+      )
+    }
+
+    // 从尾部识别视图关键词：剩下的整体当昵称（昵称允许含空格）
+    let view = 'career'
+    let query = raw
+    let limit = 0
+    const tail = raw.match(/^(.*?)\s+(生涯|资料|战绩|对局|比赛|搭档|队友|对手|敌人)\s*(\d{1,2})?$/)
+    if (tail && tail[1].trim()) {
+      query = tail[1].trim()
+      view = STATS_VIEW_ALIAS[tail[2]] || 'career'
+      limit = parseInt(tail[3], 10) || 0
+    }
+
+    if (!query) {
+      return await this.sendTextCard(e, '战绩查询', '请提供玩家昵称或 UID，例如：-战绩 Maker寒冬', '用法')
+    }
+
+    try {
+      const { player, candidates, confident } = await this.stats.resolvePlayer(query)
+
+      // 昵称不精确命中且候选较多时，先让用户确认，避免查错人
+      if (!confident && candidates.length > 1) {
+        const list = candidates.slice(0, 6).map((item, index) => {
+          const tags = []
+          if (item.matchedBy === 'previous-nickname') tags.push('曾用名')
+          if (item.level) tags.push(`Lv.${item.level}`)
+          return `${index + 1}. ${item.nickname}${tags.length ? `（${tags.join('，')}）` : ''}  UID ${item.playerId}`
+        })
+        return await this.sendTextCard(
+          e,
+          `「${query}」匹配到 ${candidates.length} 个账号`,
+          [
+            '没有精确命中，请用完整昵称或 UID 重试：',
+            '',
+            ...list,
+            candidates.length > 6 ? `… 还有 ${candidates.length - 6} 个` : '',
+            '',
+            `例：-战绩 ${candidates[0].playerId} ${view === 'career' ? '' : view}`.trim(),
+          ].filter(Boolean).join('\n'),
+          '需要确认'
+        )
+      }
+
+      const profile = await this.stats.summoner(player.playerId)
+      const meta = await this.stats.meta().catch(() => ({ modes: {}, roles: {}, seasons: [] }))
+
+      let tpl = STATS_CAREER_TEMPLATE
+      let card = null
+      if (view === 'matches') {
+        tpl = STATS_MATCHES_TEMPLATE
+        card = buildMatchesCard(profile, {
+          meta,
+          limit: limit || parseInt(this.config.stats_match_limit, 10) || 10,
+        })
+      } else if (view === 'teammate' || view === 'rival') {
+        tpl = STATS_RELATIONS_TEMPLATE
+        card = buildRelationsCard(profile, view)
+      } else {
+        card = buildCareerCard(profile, meta)
+      }
+
+      const img = await this.renderStatsCard(tpl, card)
+      if (img) {
+        await e.reply(img)
+        return true
+      }
+      // 文字回退
+      await e.reply(this._statsText(card, view))
+      return true
+    } catch (err) {
+      return await this._statsError(e, err, query)
+    }
+  }
+
+  /**
+   * 排行榜查询
+   * @param {string} arg 榜单名（段位/团队/推车/挑战/生化）或类型编号，留空为段位榜
+   */
+  async handleRanking(e, arg) {
+    if (this.config.stats_enabled === false) return false
+
+    try {
+      const types = await this.stats.rankTypes()
+      if (!types.length) {
+        return await this.sendTextCard(e, '排行榜', '站点暂时没有返回可用的榜单类型，请稍后再试。', '查询提示')
+      }
+
+      let type = types.find(item => item.code === 1) || types[0]
+      const wanted = String(arg || '').trim()
+      if (wanted) {
+        const norm = s => String(s || '').replace(/[榜\s]/g, '')
+        const target = norm(wanted)
+        let hit = null
+
+        // 1) 直接给类型编号
+        if (/^\d+$/.test(target)) {
+          hit = types.find(item => String(item.code) === target) || null
+        }
+        // 2) 口语关键词（推车 → 极限推进榜、生化 → 晶源感染榜）
+        if (!hit && target) {
+          for (const [code, words] of Object.entries(RANKING_KEYWORDS)) {
+            if (!words.some(word => target.includes(word) || word.includes(target))) continue
+            hit = types.find(item => String(item.code) === code) || null
+            if (hit) break
+          }
+        }
+        // 3) 榜单正式名
+        if (!hit && target) {
+          const byLabel = types.find(item => {
+            const label = norm(item.label)
+            return label.includes(target) || target.includes(label)
+          })
+          if (byLabel) hit = byLabel
+        }
+
+        if (!hit) {
+          return await this.sendTextCard(
+            e,
+            '排行榜',
+            [
+              `未识别的榜单「${wanted}」。`,
+              '',
+              '可用榜单：',
+              ...types.map(item => `· ${item.label}（${item.code}）`),
+              '',
+              '口语也认：推车 / 生化 / 团队 / 挑战 / 段位',
+              '例：-排行 推车',
+            ].join('\n'),
+            '用法'
+          )
+        }
+        type = hit
+      }
+
+      const size = Math.min(50, Math.max(1, parseInt(this.config.stats_ranking_size, 10) || 20))
+      const data = await this.stats.rankings({ type: type.code, page: 1, pageSize: size })
+      const meta = await this.stats.meta().catch(() => ({ modes: {}, roles: {}, seasons: [] }))
+      const card = buildRankingCard(data, meta)
+
+      const img = await this.renderStatsCard(STATS_RANKING_TEMPLATE, card)
+      if (img) {
+        await e.reply(img)
+        return true
+      }
+      await e.reply(this._statsText(card, 'ranking'))
+      return true
+    } catch (err) {
+      return await this._statsError(e, err, '排行榜')
+    }
+  }
+
+  /**
+   * 渲染战绩卡片
+   * @param {string} tplFile 模板路径
+   * @param {Object} data 模板数据
+   * @returns {Promise<Object|null>} segment 对象或 null
+   */
+  async renderStatsCard(tplFile, data) {
+    if (!puppeteer) return null
+    const { cardWidth, timeout } = renderSettings(this.config)
+    const saveId = `stats_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+    try {
+      return await puppeteer.screenshot('klbq-wiki', {
+        tplFile,
+        saveId,
+        imgType: 'jpeg',
+        quality: 88,
+        ...data,
+        card_width: cardWidth,
+        pageGotoParams: {
+          timeout: timeout * 1000,
+          waitUntil: 'networkidle2',
+        },
+      })
+    } catch (err) {
+      logger.warn(`[KlbqWiki] 战绩卡片渲染失败: ${err}`)
+      return null
+    }
+  }
+
+  /**
+   * 战绩数据的文字回退
+   * @param {Object} card 卡片数据
+   * @param {string} view career|matches|teammate|rival|ranking
+   */
+  _statsText(card, view = 'career') {
+    const lines = [`【${card.title}】`]
+    if (card.kind) lines.push(card.kind)
+    if (card.metaLine) lines.push(card.metaLine)
+    lines.push('')
+
+    if (view === 'career') {
+      if (card.belt?.length) {
+        lines.push(card.belt.map(item => `${item.label} ${item.value}`).join(' ｜ '))
+        lines.push('')
+      }
+      if (card.kv?.length) {
+        for (let i = 0; i < card.kv.length; i += 2) {
+          const pair = card.kv.slice(i, i + 2).map(item => `${item.label} ${item.value}`)
+          lines.push(pair.join(' ｜ '))
+        }
+        lines.push('')
+      }
+      if (card.roles?.length) {
+        lines.push('常用角色')
+        card.roles.forEach((item, index) => {
+          lines.push(`${index + 1}. ${item.name}  ${item.games} 场 胜率 ${item.winRate} K/D ${item.kd}`)
+        })
+        lines.push('')
+      }
+      if (card.modes?.length) {
+        lines.push('模式统计')
+        card.modes.forEach(item => {
+          lines.push(`· ${item.label}  ${item.rounds} 场 胜率 ${item.winRate} K/D ${item.kd}`)
+        })
+      }
+    } else if (view === 'matches') {
+      if (card.rows?.length) {
+        card.rows.forEach(item => {
+          const badge = item.badge ? ` ${item.badge}` : ''
+          lines.push(
+            `${item.time} ${item.mode} ${item.role} ` +
+            `${item.score} ${item.kda} ${item.result}${badge}` +
+            (item.delta ? ` ${item.delta}` : '')
+          )
+        })
+      } else {
+        lines.push('没有查到对局记录。')
+      }
+    } else if (view === 'ranking') {
+      if (card.rows?.length) {
+        card.rows.forEach(item => {
+          const tierPart = item.tier ? `${item.tier} ` : ''
+          const gamesPart = item.gamesLabel ? `  ${item.gamesLabel}` : ''
+          lines.push(`${item.position}. ${item.name}  ${tierPart}${item.score}${gamesPart}`)
+        })
+      } else {
+        lines.push(card.emptyText || '这个榜单暂时没有数据')
+      }
+    } else {
+      if (card.rows?.length) {
+        card.rows.forEach((item, index) => {
+          lines.push(
+            `${index + 1}. ${item.name}  ${item.games} 场 ` +
+            `${item.wins} 胜 ${item.losses} 负 胜率 ${item.winRate}`
+          )
+        })
+      } else {
+        lines.push(card.emptyText || '暂无记录')
+      }
+    }
+
+    if (card.tip) {
+      lines.push('')
+      lines.push(card.tip)
+    }
+    return lines.join('\n')
+  }
+
+  /**
+   * 战绩查询的错误提示
+   * @param {Error} err
+   * @param {string} query 用户查询词，用于文案
+   */
+  async _statsError(e, err, query = '') {
+    let message
+    if (err instanceof StatsError) {
+      switch (err.code) {
+        case 'not_found':
+          message = [
+            `没有找到「${query}」对应的玩家。`,
+            '',
+            '请检查昵称是否完整（区分大小写与符号），或改用 UID 查询：',
+            `-战绩 <UID>`,
+          ].join('\n')
+          break
+        case 'session':
+          message = '站点没有这个玩家的可用查询会话（国际服暂不支持，仅国服可查）。'
+          break
+        case 'rate_limited':
+          message = '站点限流了，请稍等一会儿再查。'
+          break
+        case 'timeout':
+          message = '查询超时了。站点上游响应较慢，稍后重试通常就好了。'
+          break
+        case 'network':
+          message = '连不上战绩站点，请检查网络或稍后重试。'
+          break
+        default:
+          message = `战绩站点返回了错误：${err.message}`
+          break
+      }
+      logger.warn(`[KlbqWiki] 战绩查询失败(${err.code}): ${err.message}`)
+    } else {
+      message = `战绩查询失败：${err?.message || err}`
+      logger.error(`[KlbqWiki] 战绩查询异常: ${err}`)
+    }
+    return await this.sendTextCard(e, '战绩查询', message, '查询提示')
   }
 
   /** 角色技能查询 */
@@ -1924,6 +2359,7 @@ export class KlbqWikiPlugin extends plugin {
     if (key === '重置' || key === 'reset' || key === '默认') {
       this.config = { ...DEFAULT_CONFIG }
       const ok = saveConfig(this.config)
+      this._reloadStatsClient()
       await e.reply(ok ? '✅ 已恢复全部默认配置并保存。' : '❌ 配置保存失败，请查看日志。')
       return true
     }
@@ -2050,6 +2486,11 @@ export class KlbqWikiPlugin extends plugin {
         image_timeout: [1, 60],
         image_cache_ttl: [0, 365],
         restart_delay: [1, 30],
+        stats_timeout: [5, 60],
+        stats_cache_ttl: [0, 86400],
+        stats_match_limit: [1, 20],
+        stats_ranking_size: [1, 50],
+        stats_concurrency: [1, 5],
       }
       if (ranges[key]) {
         const [min, max] = ranges[key]
@@ -2071,6 +2512,8 @@ export class KlbqWikiPlugin extends plugin {
     this.config[key] = value
     const ok = saveConfig(this.config)
     if (ok) {
+      // stats_* 这类配置改了要重建客户端，否则还是旧实例在用
+      this._reloadStatsClient()
       await e.reply(
         `✅ 配置已更新并保存：\n${key}\n${this._formatValue(oldValue, meta.type)} → ${this._formatValue(value, meta.type)}\n\n重启 Yunzai 后完全生效。`,
       )

@@ -29,6 +29,9 @@ import {
   buildMatchesCard,
   buildRelationsCard,
   buildRankingCard,
+  buildMatchCard,
+  buildClanCard,
+  buildBannedCard,
   tierLabel,
   formatNumber,
   formatPercent,
@@ -92,6 +95,9 @@ const STATS_CAREER_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/stats-career.h
 const STATS_MATCHES_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/stats-matches.html`
 const STATS_RANKING_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/stats-ranking.html`
 const STATS_RELATIONS_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/stats-relations.html`
+const STATS_MATCH_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/stats-match.html`
+const STATS_CLAN_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/stats-clan.html`
+const STATS_BANNED_TEMPLATE = `./plugins/${PLUGIN_NAME}/resources/stats-banned.html`
 
 /** 默认配置 */
 const DEFAULT_CONFIG = {
@@ -144,6 +150,10 @@ const DEFAULT_CONFIG = {
   stats_ranking_size: 20,
   // 对同一站点的并发上限（1-5），压低可减少对站方的压力
   stats_concurrency: 3,
+  // 封神榜每卡显示条数（1-50）
+  stats_banned_limit: 15,
+  // 封神榜查个人时最多扫几页（每页 50 条）。站点会忽略它的 query 参数，只能本地筛
+  stats_banned_scan_pages: 6,
 }
 
 /** 加载配置 */
@@ -198,6 +208,8 @@ function saveConfig(config) {
       stats_match_limit: '# 【战绩查询】最近对局每卡显示条数（1-20）',
       stats_ranking_size: '# 【战绩查询】排行榜每卡显示条数（1-50）',
       stats_concurrency: '# 【战绩查询】对站点的并发上限（1-5）',
+      stats_banned_limit: '# 【战绩查询】封神榜每卡显示条数（1-50）',
+      stats_banned_scan_pages: '# 【战绩查询】封神榜查个人时最多扫几页（1-20，每页 50 条）',
     }
     for (const [key, value] of Object.entries(DEFAULT_CONFIG)) {
       if (descriptions[key]) lines.push(descriptions[key])
@@ -254,6 +266,8 @@ const CONFIG_META = {
   stats_match_limit: { type: 'number',  group: '战绩查询', label: '对局条数',   desc: '最近对局每卡显示条数（1-20）' },
   stats_ranking_size:{ type: 'number',  group: '战绩查询', label: '排行条数',   desc: '排行榜每卡显示条数（1-50）' },
   stats_concurrency: { type: 'number',  group: '战绩查询', label: '并发上限',   desc: '对站点的并发请求上限（1-5）' },
+  stats_banned_limit:{ type: 'number',  group: '战绩查询', label: '封神榜条数', desc: '封神榜每卡显示条数（1-50）' },
+  stats_banned_scan_pages: { type: 'number', group: '战绩查询', label: '封神榜扫描页数', desc: '查个人时最多翻几页（1-20，每页 50 条）' },
 }
 
 /** 读取渲染设置 */
@@ -374,6 +388,9 @@ function helpData() {
         { name: '-战绩 Maker寒冬 搭档', desc: '查同队玩家胜率' },
         { name: '-战绩 Maker寒冬 对手', desc: '查交手玩家胜率' },
         { name: '-排行 段位榜', desc: '查排行榜，可选段位/团队/推车/挑战/生化' },
+        { name: '-对局 763696054851863695', desc: '查单局记分板（双方 10 人 + 分回合）' },
+        { name: '-战队 168874', desc: '查战队概况，按 ID 最准' },
+        { name: '-封神榜', desc: '查官方封禁记录，带 ID 或昵称可查个人' },
       ],
     },
     {
@@ -493,6 +510,13 @@ export class KlbqWikiPlugin extends plugin {
     { reg: /^(.+?)\s*战绩$/, fn: (self, e, m) => self.handleStats(e, m[1].trim()) },
     // 排行榜：-排行 [段位|团队|推车|挑战|生化]，默认段位榜
     { reg: /^(?:排行榜|排行|榜单)(?:\s+(.*))?$/, fn: (self, e, m) => self.handleRanking(e, (m[1] || '').trim()) },
+    // 单局详情：-对局 763696054851863695
+    // 这里要接住「对局 + 任意数字」，否则会掉到 Wiki 条目查询（有个叫「对局状态效果」的页面）
+    { reg: /^(?:对局详情|单局|对局)(?:\s*(\d+))?$/, fn: (self, e, m) => self.handleMatchDetail(e, m[1] || '') },
+    // 战队：-战队 168874（按 ID 稳） / -战队 惊天大扫码
+    { reg: /^(?:战队|战队查询|查战队)(?:\s+(.*))?$/, fn: (self, e, m) => self.handleClan(e, (m[1] || '').trim()) },
+    // 封神榜：-封神榜（榜单） / -封神榜 2154836（查某人）
+    { reg: /^(?:封神榜|封号榜|封禁榜)(?:\s+(.*))?$/, fn: (self, e, m) => self.handleBanned(e, (m[1] || '').trim()) },
     // 角色技能：支持角色别名，如 -心夏技能、-奶妈技能
     { reg: /^(.+?)技能$/, fn: (self, e, m) => self.handleRoleSkills(e, m[1]) },
     // 角色觉醒：支持角色别名，如 -心夏觉醒、-奶妈觉醒（捕获组 trim 兼容"心夏 觉醒"写法）
@@ -1035,6 +1059,125 @@ export class KlbqWikiPlugin extends plugin {
   }
 
   /**
+   * 单局详情
+   * @param {string} roomId 对局 ID
+   */
+  async handleMatchDetail(e, roomId) {
+    if (this.config.stats_enabled === false) return false
+    if (!roomId) {
+      return await this.sendTextCard(
+        e,
+        '单局详情',
+        [
+          '用法：-对局 <对局 ID>',
+          '',
+          '对局 ID 从「最近对局」里取：',
+          '-战绩 <昵称> 对局',
+          '',
+          '例：-对局 763696054851863695',
+        ].join('\n'),
+        '用法'
+      )
+    }
+    try {
+      const detail = await this.stats.matchDetail(roomId)
+      const meta = await this.stats.meta().catch(() => ({ roles: {}, modes: {} }))
+      const card = buildMatchCard(detail, meta)
+
+      const img = await this.renderStatsCard(STATS_MATCH_TEMPLATE, card)
+      if (img) {
+        await e.reply(img)
+        return true
+      }
+      await e.reply(this._statsText(card, 'match'))
+      return true
+    } catch (err) {
+      if (err instanceof StatsError && err.code === 'not_found') {
+        return await this.sendTextCard(
+          e,
+          '单局详情',
+          [
+            `没有查到对局「${roomId}」的记分板。`,
+            '',
+            '对局 ID 是 19 位数字，从最近对局里取：',
+            '-战绩 <昵称> 对局',
+          ].join('\n'),
+          '查询提示'
+        )
+      }
+      return await this._statsError(e, err, `对局 ${roomId}`)
+    }
+  }
+
+  /**
+   * 战队查询
+   * @param {string} query 战队 ID 或名称
+   */
+  async handleClan(e, query) {
+    if (this.config.stats_enabled === false) return false
+    if (!query) {
+      return await this.sendTextCard(
+        e,
+        '战队查询',
+        ['用法：-战队 <战队 ID 或名称>', '', '例：', '-战队 168874', '-战队 惊天大扫码'].join('\n'),
+        '用法'
+      )
+    }
+    try {
+      // 纯数字按 ID 查：站点的名称索引不完整，按名搜经常直接 422
+      const options = /^\d+$/.test(query) ? { clanId: query } : { name: query }
+      const clans = await this.stats.searchClans({ ...options, limit: 5 })
+      const card = buildClanCard(clans)
+
+      const img = await this.renderStatsCard(STATS_CLAN_TEMPLATE, card)
+      if (img) {
+        await e.reply(img)
+        return true
+      }
+      await e.reply(this._statsText(card, 'clan'))
+      return true
+    } catch (err) {
+      if (err instanceof StatsError && err.code === 'not_found' && /^\d+$/.test(query)) {
+        // 按 ID 查不到时给一条可行的退路，而不是只说「没找到」
+        return await this.sendTextCard(
+          e,
+          '战队查询',
+          `没有找到 ID 为 ${query} 的战队。\n\n站点的战队名称索引不完整，用名称搜容易失败；ID 可从玩家生涯卡里的「战队」字段获取。`,
+          '查询提示'
+        )
+      }
+      return await this._statsError(e, err, query)
+    }
+  }
+
+  /**
+   * 封神榜
+   * @param {string} query 玩家 UID 或昵称，留空则取榜单
+   */
+  async handleBanned(e, query) {
+    if (this.config.stats_enabled === false) return false
+    try {
+      const limit = Math.min(50, Math.max(1, parseInt(this.config.stats_banned_limit, 10) || 15))
+      const scanPages = Math.min(20, Math.max(1, parseInt(this.config.stats_banned_scan_pages, 10) || 6))
+      const data = await this.stats.bannedPlayers({ query, limit, scanPages })
+      const card = buildBannedCard(data, { query })
+      if (!card.rows.length) {
+        return await this.sendTextCard(e, card.title, card.emptyText, '查询提示')
+      }
+
+      const img = await this.renderStatsCard(STATS_BANNED_TEMPLATE, card)
+      if (img) {
+        await e.reply(img)
+        return true
+      }
+      await e.reply(this._statsText(card, 'banned'))
+      return true
+    } catch (err) {
+      return await this._statsError(e, err, query || '封神榜')
+    }
+  }
+
+  /**
    * 渲染战绩卡片
    * @param {string} tplFile 模板路径
    * @param {Object} data 模板数据
@@ -1122,7 +1265,42 @@ export class KlbqWikiPlugin extends plugin {
       } else {
         lines.push(card.emptyText || '这个榜单暂时没有数据')
       }
+    } else if (view === 'match') {
+      if (card.teams?.length) {
+        for (const team of card.teams) {
+          lines.push(`【${team.label}】${team.totalKillsText} 杀`)
+          team.players.forEach(item => {
+            const badge = item.badge ? ` ${item.badge}` : ''
+            const mark = item.isTarget ? ' ←' : ''
+            lines.push(`  ${item.name} ${item.role} ${item.kda} 伤害 ${item.damage}${badge}${mark}`)
+          })
+          lines.push('')
+        }
+      } else {
+        lines.push(card.emptyText || '这一场没有可用的记分板数据')
+      }
+    } else if (view === 'clan') {
+      if (card.rows?.length) {
+        card.rows.forEach(item => {
+          lines.push(`${item.name}（ID ${item.id}）Lv.${item.level} · ${item.members} 人`)
+          if (item.intro) lines.push(`  ${item.intro}`)
+        })
+      } else {
+        lines.push(card.emptyText || '没有找到战队')
+      }
+    } else if (view === 'banned') {
+      if (card.rows?.length) {
+        card.rows.forEach((item, index) => {
+          const tierPart = item.tier ? ` ${item.tier}` : ''
+          lines.push(
+            `${index + 1}. ${item.name}（ID ${item.id}）${tierPart} Lv.${item.level}  ${item.date}`
+          )
+        })
+      } else {
+        lines.push(card.emptyText || '封神榜暂时没有数据')
+      }
     } else {
+      // 搭档 / 对手
       if (card.rows?.length) {
         card.rows.forEach((item, index) => {
           lines.push(
@@ -2491,6 +2669,8 @@ export class KlbqWikiPlugin extends plugin {
         stats_match_limit: [1, 20],
         stats_ranking_size: [1, 50],
         stats_concurrency: [1, 5],
+        stats_banned_limit: [1, 50],
+        stats_banned_scan_pages: [1, 20],
       }
       if (ranges[key]) {
         const [min, max] = ranges[key]

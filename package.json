@@ -1,6 +1,6 @@
 {
   "name": "klbq-wiki",
-  "version": "1.17.0",
+  "version": "1.17.1",
   "description": "卡拉彼丘 Wiki 查询插件 - 查询角色、技能、武器、皮肤、地图、公告、语音、活动、兑换码、生日、赛季与玩家战绩",
   "main": "index.js",
   "type": "module",

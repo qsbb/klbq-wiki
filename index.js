@@ -1242,6 +1242,12 @@ export class KlbqWikiPlugin extends plugin {
           lines.push(`· ${item.label}  ${item.rounds} 场 胜率 ${item.winRate} K/D ${item.kd}`)
         })
       }
+      if (card.zombie) {
+        lines.push('')
+        lines.push(
+          `生化模式：${card.zombie.games} 场 胜率 ${card.zombie.winRate} K/D ${card.zombie.kd}`
+        )
+      }
     } else if (view === 'matches') {
       if (card.rows?.length) {
         card.rows.forEach(item => {
